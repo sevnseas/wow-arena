@@ -1,11 +1,11 @@
 /**
- * WoW Arena Sandbox - Phase 1 MVP
+ * WoW Arena Sandbox - Phase 3
  *
- * A spatial toybox with:
- * - Strict coordinate system (+Y up, +X right, -Z forward)
- * - Nagrand-style arena blockout
- * - Third-person camera with orbit controls
- * - Click-to-target system
+ * Features:
+ * - Class selection (Tab)
+ * - Action bar with abilities
+ * - Cooldowns, debuffs, casting, projectiles
+ * - Rogue/Mage/Priest with 3 abilities each
  */
 
 import * as THREE from 'three';
@@ -16,6 +16,8 @@ import { PlayerController } from './player';
 import { TargetingSystem } from './targeting';
 import { INITIAL_ENTITIES, EntityDef } from './entities';
 import { ProceduralCharacterView, CharacterView, LocomotionState } from './character';
+import { CooldownManager, DebuffManager, CastSystem, ProjectileSystem } from './systems';
+import { ClassName, AbilityContext, getClassAbilities, getAbilityByKey } from './abilities';
 
 // ============================================================================
 // Game State
@@ -31,6 +33,14 @@ interface GameState {
   entities: Map<string, THREE.Object3D>;
   clock: THREE.Clock;
   debugElement: HTMLElement | null;
+
+  // Phase 3 systems
+  currentClass: ClassName;
+  cooldowns: CooldownManager;
+  debuffs: DebuffManager;
+  casts: CastSystem;
+  projectiles: ProjectileSystem;
+  classSelectOpen: boolean;
 }
 
 // ============================================================================
@@ -41,11 +51,9 @@ function createEntityMesh(def: EntityDef): THREE.Group {
   const group = new THREE.Group();
   group.name = def.id;
 
-  // Create capsule-like shape (cylinder + hemispheres)
   const { radius, height } = def.collider;
   const cylinderHeight = height - radius * 2;
 
-  // Main body (cylinder)
   const bodyGeometry = new THREE.CylinderGeometry(radius, radius, cylinderHeight, 16);
   const bodyMaterial = new THREE.MeshStandardMaterial({
     color: def.color,
@@ -57,31 +65,18 @@ function createEntityMesh(def: EntityDef): THREE.Group {
   body.castShadow = true;
   group.add(body);
 
-  // Top sphere
   const topGeometry = new THREE.SphereGeometry(radius, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
-  const topMaterial = new THREE.MeshStandardMaterial({
-    color: def.color,
-    roughness: 0.7,
-    metalness: 0.2
-  });
-  const top = new THREE.Mesh(topGeometry, topMaterial);
+  const top = new THREE.Mesh(topGeometry, bodyMaterial.clone());
   top.position.y = height - radius;
   top.castShadow = true;
   group.add(top);
 
-  // Bottom sphere
   const bottomGeometry = new THREE.SphereGeometry(radius, 16, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
-  const bottomMaterial = new THREE.MeshStandardMaterial({
-    color: def.color,
-    roughness: 0.7,
-    metalness: 0.2
-  });
-  const bottom = new THREE.Mesh(bottomGeometry, bottomMaterial);
+  const bottom = new THREE.Mesh(bottomGeometry, bodyMaterial.clone());
   bottom.position.y = radius;
   bottom.castShadow = true;
   group.add(bottom);
 
-  // Team indicator ring at feet
   const ringGeometry = new THREE.RingGeometry(radius + 0.05, radius + 0.15, 32);
   const ringMaterial = new THREE.MeshBasicMaterial({
     color: def.team === 'friendly' ? 0x00ff88 : 0xff4444,
@@ -92,10 +87,7 @@ function createEntityMesh(def: EntityDef): THREE.Group {
   ring.position.y = 0.01;
   group.add(ring);
 
-  // Set position
   group.position.set(...def.position);
-
-  // Store entity data
   group.userData = {
     entityId: def.id,
     entityName: def.name,
@@ -107,16 +99,261 @@ function createEntityMesh(def: EntityDef): THREE.Group {
 }
 
 // ============================================================================
+// UI Functions
+// ============================================================================
+
+function updateActionBar(state: GameState): void {
+  const abilities = getClassAbilities(state.currentClass);
+  const slots = document.querySelectorAll('.action-slot');
+
+  slots.forEach((slot, i) => {
+    const ability = abilities[i];
+    const nameEl = slot.querySelector('.ability-name') as HTMLElement | null;
+    const keyEl = slot.querySelector('.keybind') as HTMLElement | null;
+
+    // Skip slots without proper structure
+    if (!nameEl || !keyEl) return;
+
+    // Remove existing cooldown overlay
+    const existing = slot.querySelector('.cooldown-overlay');
+    if (existing) existing.remove();
+
+    if (ability) {
+      nameEl.textContent = ability.name;
+      keyEl.textContent = ability.key.toUpperCase();
+
+      const remaining = state.cooldowns.getRemaining(ability.id);
+      if (remaining > 0) {
+        slot.classList.add('on-cooldown');
+        const overlay = document.createElement('div');
+        overlay.className = 'cooldown-overlay';
+        overlay.textContent = Math.ceil(remaining).toString();
+        slot.appendChild(overlay);
+      } else {
+        slot.classList.remove('on-cooldown');
+      }
+    } else {
+      nameEl.textContent = '';
+      keyEl.textContent = '';
+    }
+  });
+}
+
+function updateCastBar(state: GameState): void {
+  const castBar = document.getElementById('cast-bar')!;
+  const fill = document.getElementById('cast-bar-fill')!;
+  const text = document.getElementById('cast-bar-text')!;
+
+  if (state.casts.isCasting) {
+    castBar.classList.add('active');
+    const info = state.casts.currentCastInfo!;
+    const progress = state.casts.castProgress * 100;
+    fill.style.width = `${progress}%`;
+    text.textContent = info.abilityName;
+  } else {
+    castBar.classList.remove('active');
+  }
+}
+
+function updateDebuffDisplay(state: GameState): void {
+  const container = document.getElementById('target-debuffs')!;
+  container.innerHTML = '';
+
+  const target = state.targeting.currentTarget;
+  if (!target) return;
+
+  const debuffs = state.debuffs.getDebuffs(target.id);
+  for (const debuff of debuffs) {
+    const remaining = Math.ceil((debuff.expiresAt - Date.now()) / 1000);
+    const el = document.createElement('div');
+    el.className = 'debuff-icon';
+    el.textContent = `${debuff.name} (${remaining}s)`;
+    container.appendChild(el);
+  }
+}
+
+function setClass(state: GameState, className: ClassName): void {
+  state.currentClass = className;
+  state.cooldowns.resetAll();
+  state.casts.interrupt();
+
+  // Update UI
+  document.getElementById('class-name')!.textContent = className;
+  updateActionBar(state);
+
+  // Update player color based on class
+  const colors: Record<ClassName, number> = {
+    Rogue: 0xffff00,
+    Mage: 0x69ccf0,
+    Priest: 0xffffff
+  };
+
+  // Recreate player view with new color
+  state.scene.remove(state.playerView.root);
+  state.playerView.dispose();
+  state.playerView = new ProceduralCharacterView(colors[className]);
+  state.playerView.root.position.copy(state.player.position);
+  state.scene.add(state.playerView.root);
+  state.player.mesh = state.playerView.root;
+}
+
+function toggleClassSelector(state: GameState): void {
+  state.classSelectOpen = !state.classSelectOpen;
+  const selector = document.getElementById('class-selector')!;
+  selector.classList.toggle('active', state.classSelectOpen);
+}
+
+// ============================================================================
+// Ability Execution
+// ============================================================================
+
+function tryUseAbility(state: GameState, key: string): void {
+  const ability = getAbilityByKey(state.currentClass, key);
+  if (!ability) return;
+
+  // Check cooldown
+  if (!state.cooldowns.isReady(ability.id)) {
+    flashSlotError(key);
+    return;
+  }
+
+  // Check if already casting
+  if (state.casts.isCasting && ability.castTime === 0) {
+    // Allow instant casts to interrupt? For now, block
+    flashSlotError(key);
+    return;
+  }
+
+  // Check target requirement
+  const target = state.targeting.currentTarget;
+  if (ability.requiresTarget && !target) {
+    flashSlotError(key);
+    return;
+  }
+
+  // Check range
+  if (ability.requiresTarget && target && ability.range > 0) {
+    const dist = state.player.position.distanceTo(target.mesh.position);
+    if (dist > ability.range) {
+      flashSlotError(key);
+      return;
+    }
+  }
+
+  // Build context
+  const ctx: AbilityContext = {
+    casterId: 'player',
+    casterPos: state.player.position.clone(),
+    casterYaw: state.cameraRig.yaw,
+    targetId: target?.id || null,
+    targetPos: target ? target.mesh.position.clone() : null,
+    cooldowns: state.cooldowns,
+    debuffs: state.debuffs,
+    casts: state.casts,
+    projectiles: state.projectiles,
+    getEntityPos: (id) => {
+      const ent = state.entities.get(id);
+      return ent ? ent.position.clone() : null;
+    },
+    setEntityPos: (id, pos) => {
+      if (id === 'player') {
+        state.player.position.copy(pos);
+        state.player.mesh?.position.copy(pos);
+      } else {
+        const ent = state.entities.get(id);
+        if (ent) ent.position.copy(pos);
+      }
+    },
+    flashHit: (entityId) => {
+      flashEntityHit(state, entityId);
+    }
+  };
+
+  // Execute
+  flashSlotPressed(key);
+  ability.execute(ctx);
+}
+
+function flashSlotPressed(key: string): void {
+  const slot = document.querySelector(`.action-slot[data-key="${key}"]`);
+  if (slot) {
+    slot.classList.add('pressed');
+    setTimeout(() => slot.classList.remove('pressed'), 100);
+  }
+}
+
+function flashSlotError(key: string): void {
+  const slot = document.querySelector(`.action-slot[data-key="${key}"]`);
+  if (slot) {
+    slot.classList.add('pressed');
+    (slot as HTMLElement).style.borderColor = '#f00';
+    setTimeout(() => {
+      slot.classList.remove('pressed');
+      (slot as HTMLElement).style.borderColor = '';
+    }, 150);
+  }
+}
+
+function flashEntityHit(state: GameState, entityId: string): void {
+  const entity = state.entities.get(entityId);
+  if (!entity) return;
+
+  entity.traverse((child) => {
+    if (child instanceof THREE.Mesh && child.material) {
+      const mat = child.material as THREE.MeshStandardMaterial;
+      const origEmissive = mat.emissive.clone();
+      mat.emissive.set(0xffffff);
+      mat.emissiveIntensity = 0.5;
+      setTimeout(() => {
+        mat.emissive.copy(origEmissive);
+        mat.emissiveIntensity = 0;
+      }, 100);
+    }
+  });
+}
+
+// ============================================================================
+// Input Handling
+// ============================================================================
+
+function setupInput(state: GameState): void {
+  window.addEventListener('keydown', (e) => {
+    // Tab for class selector
+    if (e.code === 'Tab') {
+      e.preventDefault();
+      toggleClassSelector(state);
+      return;
+    }
+
+    // Block gameplay input while class selector open
+    if (state.classSelectOpen) return;
+
+    // Ability keys
+    const key = e.key.toLowerCase();
+    if (['1', '2', '3', 'q', 'e', 'r', 'f', 'g'].includes(key)) {
+      tryUseAbility(state, key);
+    }
+  });
+
+  // Class selection buttons
+  document.querySelectorAll('.class-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const className = btn.getAttribute('data-class') as ClassName;
+      setClass(state, className);
+      toggleClassSelector(state);
+    });
+  });
+}
+
+// ============================================================================
 // Initialization
 // ============================================================================
 
 function init(): GameState {
-  // Create scene
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1a1a2e);
   scene.fog = new THREE.Fog(0x1a1a2e, 30, 60);
 
-  // Create renderer
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -126,24 +363,19 @@ function init(): GameState {
   renderer.toneMappingExposure = 1.0;
   document.body.appendChild(renderer.domElement);
 
-  // Create camera rig
   const cameraRig = new CameraRig();
   cameraRig.attach(renderer.domElement);
 
-  // Add arena
   const arena = createArena();
   scene.add(arena);
 
-  // Add lighting
   const lighting = createArenaLighting();
   scene.add(lighting);
 
-  // Add coordinate axis gizmo at origin
   const axisGizmo = createAxisGizmo(2);
   axisGizmo.position.set(0, 0.01, 0);
   scene.add(axisGizmo);
 
-  // Create entities (NPCs get capsule mesh, player gets CharacterView)
   const entities = new Map<string, THREE.Object3D>();
 
   for (const def of INITIAL_ENTITIES) {
@@ -154,14 +386,12 @@ function init(): GameState {
     }
   }
 
-  // Create player with CharacterView
   const playerDef = INITIAL_ENTITIES.find(e => e.id === 'player')!;
   const playerView = new ProceduralCharacterView(playerDef.color);
   playerView.root.position.set(...playerDef.position);
   scene.add(playerView.root);
   entities.set('player', playerView.root);
 
-  // Create player controller
   const player = new PlayerController(
     new THREE.Vector3(...playerDef.position)
   );
@@ -169,11 +399,9 @@ function init(): GameState {
   player.attach();
   player.setColliders(getColliders());
 
-  // Create targeting system
   const targeting = new TargetingSystem(cameraRig.camera);
   targeting.attach(renderer.domElement);
 
-  // Register all entities as targetable (except player)
   for (const [id, mesh] of entities) {
     if (id !== 'player') {
       const def = INITIAL_ENTITIES.find(e => e.id === id)!;
@@ -181,22 +409,22 @@ function init(): GameState {
     }
   }
 
-  // Get debug element
   const debugElement = document.getElementById('debug-info');
 
-  // Handle window resize
   window.addEventListener('resize', () => {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-
-    cameraRig.resize(width, height);
-    renderer.setSize(width, height);
+    cameraRig.resize(window.innerWidth, window.innerHeight);
+    renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // Create clock
   const clock = new THREE.Clock();
 
-  return {
+  // Phase 3 systems
+  const cooldowns = new CooldownManager();
+  const debuffs = new DebuffManager();
+  const casts = new CastSystem();
+  const projectiles = new ProjectileSystem(scene);
+
+  const state: GameState = {
     scene,
     renderer,
     cameraRig,
@@ -205,8 +433,19 @@ function init(): GameState {
     targeting,
     entities,
     clock,
-    debugElement
+    debugElement,
+    currentClass: 'Rogue',
+    cooldowns,
+    debuffs,
+    casts,
+    projectiles,
+    classSelectOpen: false
   };
+
+  setupInput(state);
+  updateActionBar(state);
+
+  return state;
 }
 
 // ============================================================================
@@ -216,26 +455,24 @@ function init(): GameState {
 function animate(state: GameState): void {
   requestAnimationFrame(() => animate(state));
 
-  const {
-    scene,
-    renderer,
-    cameraRig,
-    player,
-    playerView,
-    targeting,
-    clock,
-    debugElement
-  } = state;
+  const delta = state.clock.getDelta();
 
-  const delta = clock.getDelta();
+  // Cancel cast on movement
+  if (state.casts.isCasting) {
+    const vel = state.player.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
+    if (speed > 0.5) {
+      state.casts.interrupt();
+    }
+  }
 
-  // Update player (pass camera yaw for movement direction)
-  player.update(delta, cameraRig.yaw);
+  // Update player
+  state.player.update(delta, state.cameraRig.yaw);
 
   // Update player character view
-  const vel = player.velocity;
+  const vel = state.player.velocity;
   const speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
-  const isGrounded = player.position.y <= 0.01;
+  const isGrounded = state.player.position.y <= 0.01;
 
   let locoState: LocomotionState = 'idle';
   if (!isGrounded) {
@@ -246,29 +483,38 @@ function animate(state: GameState): void {
     locoState = 'walk';
   }
 
-  playerView.setLocomotion(locoState, speed / 6);
+  state.playerView.setLocomotion(locoState, speed / 6);
 
-  // Face movement direction when moving
   if (speed > 0.1) {
     const moveYaw = dirToYaw(new THREE.Vector3(vel.x, 0, vel.z));
-    playerView.setFacingYaw(-moveYaw); // Negate because our convention
+    state.playerView.setFacingYaw(-moveYaw);
   }
 
-  playerView.update(delta);
+  state.playerView.update(delta);
 
-  // Update camera to follow player
-  cameraRig.update(player.position);
+  // Update camera
+  state.cameraRig.update(state.player.position);
 
-  // Update targeting system
-  targeting.update(player.position);
+  // Update targeting
+  state.targeting.update(state.player.position);
 
-  // Update debug info
-  if (debugElement) {
-    debugElement.textContent = player.getDebugInfo();
+  // Update systems
+  state.debuffs.update();
+  state.casts.update();
+  state.projectiles.update(delta);
+
+  // Update UI
+  updateActionBar(state);
+  updateCastBar(state);
+  updateDebuffDisplay(state);
+
+  // Debug info
+  if (state.debugElement) {
+    state.debugElement.textContent = `${state.currentClass} | ${state.player.getDebugInfo()}`;
   }
 
   // Render
-  renderer.render(scene, cameraRig.camera);
+  state.renderer.render(state.scene, state.cameraRig.camera);
 }
 
 // ============================================================================
@@ -278,10 +524,8 @@ function animate(state: GameState): void {
 const gameState = init();
 animate(gameState);
 
-console.log('WoW Arena Sandbox - Phase 1');
+console.log('WoW Arena Sandbox - Phase 3');
 console.log('Controls:');
-console.log('  WASD: Move');
-console.log('  Space: Jump');
-console.log('  Left-click drag: Orbit camera');
-console.log('  Click on unit: Target');
-console.log('  Click empty space: Clear target');
+console.log('  WASD: Move | Space: Jump');
+console.log('  Tab: Class Selection');
+console.log('  1-3: Abilities | Click: Target');
