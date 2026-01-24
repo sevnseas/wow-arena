@@ -136,29 +136,35 @@ const mageAbilities: AbilityDef[] = [
     name: 'Frostbolt',
     key: '2',
     cooldown: 0,
-    castTime: 0, // Instant for now
+    castTime: 1.5,
     range: 30,
     requiresTarget: true,
     execute: (ctx) => {
       if (!ctx.targetId || !ctx.targetPos) return;
 
-      const startPos = ctx.casterPos.clone();
-      startPos.y = 1;
+      const targetId = ctx.targetId;
+      const targetPos = ctx.targetPos.clone();
 
-      const endPos = ctx.targetPos.clone();
-      endPos.y = 1;
+      ctx.casts.beginCast({
+        abilityId: 'mage_frostbolt',
+        abilityName: 'Frostbolt',
+        castTime: 1.5,
+        targetId,
+        onComplete: () => {
+          const startPos = ctx.casterPos.clone();
+          startPos.y = 1;
+          targetPos.y = 1;
 
-      ctx.projectiles.spawn(
-        startPos,
-        endPos,
-        ctx.targetId,
-        20, // speed
-        0x88ccff, // ice blue
-        () => {
-          ctx.flashHit(ctx.targetId!);
-          // Could apply slow debuff here
+          ctx.projectiles.spawn(
+            startPos,
+            targetPos,
+            targetId,
+            20, // speed
+            0x88ccff, // ice blue
+            () => ctx.flashHit(targetId)
+          );
         }
-      );
+      });
     }
   },
   {
@@ -166,19 +172,29 @@ const mageAbilities: AbilityDef[] = [
     name: 'Polymorph',
     key: '3',
     cooldown: 25,
-    castTime: 0, // Instant for now, can add 2s later
+    castTime: 1.5,
     range: 20,
     requiresTarget: true,
     execute: (ctx) => {
       if (!ctx.targetId) return;
 
-      ctx.debuffs.applyDebuff(ctx.targetId, {
-        id: 'polymorph',
-        name: 'Polymorph',
-        duration: 9,
-        tags: ['cc', 'incapacitate']
+      const targetId = ctx.targetId;
+
+      ctx.casts.beginCast({
+        abilityId: 'mage_polymorph',
+        abilityName: 'Polymorph',
+        castTime: 1.5,
+        targetId,
+        onComplete: () => {
+          ctx.debuffs.applyDebuff(targetId, {
+            id: 'polymorph',
+            name: 'Polymorph',
+            duration: 9,
+            tags: ['cc', 'incapacitate']
+          });
+          ctx.cooldowns.startCooldown('mage_polymorph', 25);
+        }
       });
-      ctx.cooldowns.startCooldown('mage_polymorph', 25);
     }
   }
 ];
