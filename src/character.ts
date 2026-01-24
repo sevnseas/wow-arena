@@ -25,6 +25,15 @@ export interface CharacterView {
   /** Trigger a one-shot animation (attack, spell, etc) */
   triggerOneShot(name: string): void;
 
+  /** Start casting animation (arms raised) */
+  startCasting(): void;
+
+  /** Stop casting animation */
+  stopCasting(): void;
+
+  /** Set debuff state (turns character into a square) */
+  setDebuffed(debuffed: boolean): void;
+
   /** Update animations (call each frame) */
   update(dt: number): void;
 
@@ -63,6 +72,15 @@ export class ProceduralCharacterView implements CharacterView {
   private currentYaw: number = 0;
 
   private color: number;
+
+  // Casting/attack animation state
+  private isCasting: boolean = false;
+  private attackAnimTime: number = 0;
+  private attackAnimDuration: number = 0;
+
+  // Debuff state
+  private isDebuffed: boolean = false;
+  private debuffMesh: THREE.Mesh | null = null;
 
   constructor(color: number = 0xffff00) {
     this.color = color;
@@ -205,7 +223,48 @@ export class ProceduralCharacterView implements CharacterView {
   }
 
   triggerOneShot(_name: string): void {
-    // TODO: Implement one-shot animations
+    // Trigger attack animation (0.5s minimum for instant attacks)
+    this.attackAnimTime = 0;
+    this.attackAnimDuration = 0.5;
+  }
+
+  startCasting(): void {
+    this.isCasting = true;
+  }
+
+  stopCasting(): void {
+    this.isCasting = false;
+  }
+
+  setDebuffed(debuffed: boolean): void {
+    if (debuffed === this.isDebuffed) return;
+    this.isDebuffed = debuffed;
+
+    if (debuffed) {
+      // Hide normal mesh parts
+      this.hips.visible = false;
+
+      // Create debuff square if not exists
+      if (!this.debuffMesh) {
+        const geo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x8844ff,
+          roughness: 0.5,
+          metalness: 0.3
+        });
+        this.debuffMesh = new THREE.Mesh(geo, mat);
+        this.debuffMesh.position.y = 0.9;
+        this.debuffMesh.castShadow = true;
+        this.root.add(this.debuffMesh);
+      }
+      this.debuffMesh.visible = true;
+    } else {
+      // Show normal mesh, hide debuff square
+      this.hips.visible = true;
+      if (this.debuffMesh) {
+        this.debuffMesh.visible = false;
+      }
+    }
   }
 
   update(dt: number): void {
@@ -216,6 +275,22 @@ export class ProceduralCharacterView implements CharacterView {
     if (shortestDiff < -Math.PI) shortestDiff += Math.PI * 2;
     this.currentYaw += shortestDiff * Math.min(1, dt * 10);
     this.root.rotation.y = this.currentYaw;
+
+    // Handle debuff cube rotation
+    if (this.isDebuffed && this.debuffMesh) {
+      this.debuffMesh.rotation.y += dt * 2;
+      this.debuffMesh.rotation.x += dt * 0.5;
+      return; // Skip other animations when debuffed
+    }
+
+    // Update attack animation timer
+    if (this.attackAnimDuration > 0) {
+      this.attackAnimTime += dt;
+      if (this.attackAnimTime >= this.attackAnimDuration) {
+        this.attackAnimDuration = 0;
+        this.attackAnimTime = 0;
+      }
+    }
 
     // Advance phase for walk/run animation
     const phaseSpeed = this.state === 'run' ? 12 : 6;
@@ -236,6 +311,11 @@ export class ProceduralCharacterView implements CharacterView {
       case 'fall':
         this.applyJumpPose();
         break;
+    }
+
+    // Override arm positions for casting or attack animation
+    if (this.isCasting || this.attackAnimDuration > 0) {
+      this.applyCastingPose();
     }
   }
 
@@ -283,6 +363,14 @@ export class ProceduralCharacterView implements CharacterView {
     this.rightArm.rotation.z = -0.3;
   }
 
+  private applyCastingPose(): void {
+    // Arms raised forward for casting/attacking
+    this.leftArm.rotation.x = -1.2;
+    this.rightArm.rotation.x = -1.2;
+    this.leftArm.rotation.z = 0.2;
+    this.rightArm.rotation.z = -0.2;
+  }
+
   dispose(): void {
     this.root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
@@ -315,6 +403,18 @@ export class GltfCharacterView implements CharacterView {
   }
 
   triggerOneShot(_name: string): void {
+    // TODO
+  }
+
+  startCasting(): void {
+    // TODO
+  }
+
+  stopCasting(): void {
+    // TODO
+  }
+
+  setDebuffed(_debuffed: boolean): void {
     // TODO
   }
 

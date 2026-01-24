@@ -150,8 +150,10 @@ function updateCastBar(state: GameState): void {
     const progress = state.casts.castProgress * 100;
     fill.style.width = `${progress}%`;
     text.textContent = info.abilityName;
+    state.playerView.startCasting();
   } else {
     castBar.classList.remove('active');
+    state.playerView.stopCasting();
   }
 }
 
@@ -271,6 +273,12 @@ function tryUseAbility(state: GameState, key: string): void {
 
   // Execute
   flashSlotPressed(key);
+
+  // Trigger arm animation for instant abilities
+  if (ability.castTime === 0) {
+    state.playerView.triggerOneShot('attack');
+  }
+
   ability.execute(ctx);
 }
 
@@ -301,13 +309,17 @@ function flashEntityHit(state: GameState, entityId: string): void {
   entity.traverse((child) => {
     if (child instanceof THREE.Mesh && child.material) {
       const mat = child.material as THREE.MeshStandardMaterial;
-      const origEmissive = mat.emissive.clone();
-      mat.emissive.set(0xffffff);
-      mat.emissiveIntensity = 0.5;
-      setTimeout(() => {
-        mat.emissive.copy(origEmissive);
-        mat.emissiveIntensity = 0;
-      }, 100);
+      // Only flash if material has emissive property
+      if (mat.emissive) {
+        const origEmissive = mat.emissive.clone();
+        const origIntensity = mat.emissiveIntensity || 0;
+        mat.emissive.set(0xffffff);
+        mat.emissiveIntensity = 0.5;
+        setTimeout(() => {
+          mat.emissive.copy(origEmissive);
+          mat.emissiveIntensity = origIntensity;
+        }, 100);
+      }
     }
   });
 }

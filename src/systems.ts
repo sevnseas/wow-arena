@@ -175,7 +175,7 @@ export class CastSystem {
 
 export interface Projectile {
   id: number;
-  mesh: THREE.Mesh;
+  object: THREE.Object3D;
   velocity: THREE.Vector3;
   targetPos: THREE.Vector3;
   targetId: string | null;
@@ -202,21 +202,39 @@ export class ProjectileSystem {
     color: number,
     onHit: () => void
   ): void {
-    const geometry = new THREE.SphereGeometry(0.15, 8, 8);
+    const direction = targetPos.clone().sub(startPos).normalize();
+
+    // Offset start position forward so projectile spawns in front of caster
+    const offsetStart = startPos.clone().add(direction.clone().multiplyScalar(1.0));
+
+    // Container group for projectile + aura
+    const group = new THREE.Group();
+    group.position.copy(offsetStart);
+
+    // Main projectile sphere - larger and bright
+    const geometry = new THREE.SphereGeometry(0.3, 12, 12);
     const material = new THREE.MeshBasicMaterial({
       color,
-      transparent: true,
-      opacity: 0.9
+      transparent: false
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.copy(startPos);
-    this.scene.add(mesh);
+    group.add(mesh);
 
-    const direction = targetPos.clone().sub(startPos).normalize();
+    // Glowing aura around projectile
+    const auraGeo = new THREE.SphereGeometry(0.5, 8, 8);
+    const auraMat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.4
+    });
+    const aura = new THREE.Mesh(auraGeo, auraMat);
+    group.add(aura);
+
+    this.scene.add(group);
 
     this.projectiles.push({
       id: this.nextId++,
-      mesh,
+      object: group,
       velocity: direction.multiplyScalar(speed),
       targetPos: targetPos.clone(),
       targetId,
@@ -233,10 +251,10 @@ export class ProjectileSystem {
 
     for (const proj of this.projectiles) {
       // Move projectile
-      proj.mesh.position.addScaledVector(proj.velocity, dt);
+      proj.object.position.addScaledVector(proj.velocity, dt);
 
       // Check if hit target (distance threshold)
-      const distToTarget = proj.mesh.position.distanceTo(proj.targetPos);
+      const distToTarget = proj.object.position.distanceTo(proj.targetPos);
       if (distToTarget < 0.5) {
         proj.onHit();
         toRemove.push(proj);
@@ -252,19 +270,28 @@ export class ProjectileSystem {
 
     // Remove finished projectiles
     for (const proj of toRemove) {
-      this.scene.remove(proj.mesh);
-      proj.mesh.geometry.dispose();
-      (proj.mesh.material as THREE.Material).dispose();
+      this.scene.remove(proj.object);
+      this.disposeProjectileObject(proj.object);
       const idx = this.projectiles.indexOf(proj);
       if (idx >= 0) this.projectiles.splice(idx, 1);
     }
   }
 
+  private disposeProjectileObject(obj: THREE.Object3D): void {
+    obj.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (child.material instanceof THREE.Material) {
+          child.material.dispose();
+        }
+      }
+    });
+  }
+
   clear(): void {
     for (const proj of this.projectiles) {
-      this.scene.remove(proj.mesh);
-      proj.mesh.geometry.dispose();
-      (proj.mesh.material as THREE.Material).dispose();
+      this.scene.remove(proj.object);
+      this.disposeProjectileObject(proj.object);
     }
     this.projectiles = [];
   }
