@@ -415,11 +415,17 @@ function setupInput(state: GameState): void {
 // ============================================================================
 
 function init(): GameState {
+  console.log('[init] Starting...');
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1a1a2e);
   scene.fog = new THREE.Fog(0x1a1a2e, 30, 60);
+  console.log('[init] Scene created');
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
+  if (!renderer.getContext()) {
+    console.error('[init] WebGL context failed!');
+  }
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
@@ -427,15 +433,19 @@ function init(): GameState {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   document.body.appendChild(renderer.domElement);
+  console.log('[init] Renderer created, canvas size:', window.innerWidth, 'x', window.innerHeight);
 
   const cameraRig = new CameraRig();
   cameraRig.attach(renderer.domElement);
 
+  console.log('[init] Creating arena...');
   const arena = createArena();
   scene.add(arena);
+  console.log('[init] Arena added, children:', arena.children.length);
 
   const lighting = createArenaLighting();
   scene.add(lighting);
+  console.log('[init] Lighting added');
 
   const axisGizmo = createAxisGizmo(2);
   axisGizmo.position.set(0, 0.01, 0);
