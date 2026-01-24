@@ -251,48 +251,62 @@ export class PlayerController {
     const localX = dx * cosR + dz * sinR;
     const localZ = -dx * sinR + dz * cosR;
 
-    const halfW = col.width / 2 + this.config.radius;
-    const halfD = col.depth / 2 + this.config.radius;
+    const halfW = col.width / 2;
+    const halfD = col.depth / 2;
 
-    // Check if within box bounds horizontally
-    if (Math.abs(localX) < halfW && Math.abs(localZ) < halfD) {
-      // Check if on top of box (use tighter bounds for standing)
-      const onTopX = Math.abs(localX) < col.width / 2 + this.config.radius * 0.5;
-      const onTopZ = Math.abs(localZ) < col.depth / 2 + this.config.radius * 0.5;
-      if (onTopX && onTopZ && this.position.y >= col.height - 0.1 && this.velocity.y <= 0) {
-        return col.height;
-      }
+    // Check if within box bounds horizontally (with player radius)
+    const inBoxX = Math.abs(localX) < halfW + this.config.radius;
+    const inBoxZ = Math.abs(localZ) < halfD + this.config.radius;
 
-      // Side collision - find smallest penetration axis
-      const overlapX = halfW - Math.abs(localX);
-      const overlapZ = halfD - Math.abs(localZ);
+    if (!inBoxX || !inBoxZ) {
+      return this.config.groundY; // Not near box
+    }
 
-      // Push direction in local space
-      let pushLocalX = 0;
-      let pushLocalZ = 0;
+    // Check if player is above the box (can land on top)
+    const feetY = this.position.y;
+    const isAboveBox = feetY >= col.height - 0.05;
+    const withinTopBounds = Math.abs(localX) < halfW + this.config.radius * 0.8 &&
+                            Math.abs(localZ) < halfD + this.config.radius * 0.8;
 
-      if (overlapX < overlapZ) {
-        pushLocalX = overlapX * Math.sign(localX);
-      } else {
-        pushLocalZ = overlapZ * Math.sign(localZ);
-      }
+    if (isAboveBox && withinTopBounds) {
+      // Player can stand on this box
+      return col.height;
+    }
 
-      // Transform push back to world space (rotate by +rotation)
-      const worldPushX = pushLocalX * cosR - pushLocalZ * sinR;
-      const worldPushZ = pushLocalX * sinR + pushLocalZ * cosR;
+    // Player is beside/below the box - do side collision
+    // Only push out if player's body overlaps the box vertically
+    if (feetY < col.height) {
+      const overlapX = halfW + this.config.radius - Math.abs(localX);
+      const overlapZ = halfD + this.config.radius - Math.abs(localZ);
 
-      this.position.x += worldPushX;
-      this.position.z += worldPushZ;
+      if (overlapX > 0 && overlapZ > 0) {
+        // Push direction in local space (smallest overlap)
+        let pushLocalX = 0;
+        let pushLocalZ = 0;
 
-      // Wall slide: compute normal in world space and remove velocity into wall
-      if (worldPushX !== 0 || worldPushZ !== 0) {
-        const pushLen = Math.sqrt(worldPushX * worldPushX + worldPushZ * worldPushZ);
-        const nx = worldPushX / pushLen;
-        const nz = worldPushZ / pushLen;
-        const velDotN = this.velocity.x * nx + this.velocity.z * nz;
-        if (velDotN < 0) {
-          this.velocity.x -= velDotN * nx;
-          this.velocity.z -= velDotN * nz;
+        if (overlapX < overlapZ) {
+          pushLocalX = overlapX * Math.sign(localX);
+        } else {
+          pushLocalZ = overlapZ * Math.sign(localZ);
+        }
+
+        // Transform push back to world space (rotate by +rotation)
+        const worldPushX = pushLocalX * cosR - pushLocalZ * sinR;
+        const worldPushZ = pushLocalX * sinR + pushLocalZ * cosR;
+
+        this.position.x += worldPushX;
+        this.position.z += worldPushZ;
+
+        // Wall slide: remove velocity into wall
+        if (worldPushX !== 0 || worldPushZ !== 0) {
+          const pushLen = Math.sqrt(worldPushX * worldPushX + worldPushZ * worldPushZ);
+          const nx = worldPushX / pushLen;
+          const nz = worldPushZ / pushLen;
+          const velDotN = this.velocity.x * nx + this.velocity.z * nz;
+          if (velDotN < 0) {
+            this.velocity.x -= velDotN * nx;
+            this.velocity.z -= velDotN * nz;
+          }
         }
       }
     }
