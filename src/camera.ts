@@ -92,8 +92,8 @@ export class CameraRig {
   }
 
   private onMouseDown(e: MouseEvent): void {
-    // Left click to orbit
-    if (e.button === 0) {
+    // Left or right click to orbit
+    if (e.button === 0 || e.button === 2) {
       this.isDragging = true;
       this.lastMouseX = e.clientX;
       this.lastMouseY = e.clientY;
@@ -101,7 +101,7 @@ export class CameraRig {
   }
 
   private onMouseUp(e: MouseEvent): void {
-    if (e.button === 0) {
+    if (e.button === 0 || e.button === 2) {
       this.isDragging = false;
     }
   }
