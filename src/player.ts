@@ -239,19 +239,27 @@ export class PlayerController {
    * Returns ground level if player is on top
    */
   private resolveBox(col: BoxCollider): number {
-    // Transform player position into box's local space
-    const cos = Math.cos(-col.rotation);
-    const sin = Math.sin(-col.rotation);
-    const localX = (this.position.x - col.x) * cos - (this.position.z - col.z) * sin;
-    const localZ = (this.position.x - col.x) * sin + (this.position.z - col.z) * cos;
+    // Rotation: to local space (rotate by -rotation), to world space (rotate by +rotation)
+    const cosR = Math.cos(col.rotation);
+    const sinR = Math.sin(col.rotation);
+
+    // Player position relative to box center
+    const dx = this.position.x - col.x;
+    const dz = this.position.z - col.z;
+
+    // Transform to box local space (rotate by -rotation)
+    const localX = dx * cosR + dz * sinR;
+    const localZ = -dx * sinR + dz * cosR;
 
     const halfW = col.width / 2 + this.config.radius;
     const halfD = col.depth / 2 + this.config.radius;
 
     // Check if within box bounds horizontally
     if (Math.abs(localX) < halfW && Math.abs(localZ) < halfD) {
-      // Check if on top of box
-      if (this.position.y >= col.height - 0.1 && this.velocity.y <= 0) {
+      // Check if on top of box (use tighter bounds for standing)
+      const onTopX = Math.abs(localX) < col.width / 2 + this.config.radius * 0.5;
+      const onTopZ = Math.abs(localZ) < col.depth / 2 + this.config.radius * 0.5;
+      if (onTopX && onTopZ && this.position.y >= col.height - 0.1 && this.velocity.y <= 0) {
         return col.height;
       }
 
@@ -259,35 +267,28 @@ export class PlayerController {
       const overlapX = halfW - Math.abs(localX);
       const overlapZ = halfD - Math.abs(localZ);
 
+      // Push direction in local space
+      let pushLocalX = 0;
+      let pushLocalZ = 0;
+
       if (overlapX < overlapZ) {
-        // Push out on X axis (in local space)
-        const pushX = overlapX * Math.sign(localX);
-        // Transform back to world space
-        const worldPushX = pushX * cos;
-        const worldPushZ = pushX * -sin;
-        this.position.x += worldPushX;
-        this.position.z += worldPushZ;
-
-        // Wall slide
-        const nx = Math.sign(localX) * cos;
-        const nz = Math.sign(localX) * -sin;
-        const velDotN = this.velocity.x * nx + this.velocity.z * nz;
-        if (velDotN < 0) {
-          this.velocity.x -= velDotN * nx;
-          this.velocity.z -= velDotN * nz;
-        }
+        pushLocalX = overlapX * Math.sign(localX);
       } else {
-        // Push out on Z axis (in local space)
-        const pushZ = overlapZ * Math.sign(localZ);
-        // Transform back to world space
-        const worldPushX = pushZ * sin;
-        const worldPushZ = pushZ * cos;
-        this.position.x += worldPushX;
-        this.position.z += worldPushZ;
+        pushLocalZ = overlapZ * Math.sign(localZ);
+      }
 
-        // Wall slide
-        const nx = Math.sign(localZ) * sin;
-        const nz = Math.sign(localZ) * cos;
+      // Transform push back to world space (rotate by +rotation)
+      const worldPushX = pushLocalX * cosR - pushLocalZ * sinR;
+      const worldPushZ = pushLocalX * sinR + pushLocalZ * cosR;
+
+      this.position.x += worldPushX;
+      this.position.z += worldPushZ;
+
+      // Wall slide: compute normal in world space and remove velocity into wall
+      if (worldPushX !== 0 || worldPushZ !== 0) {
+        const pushLen = Math.sqrt(worldPushX * worldPushX + worldPushZ * worldPushZ);
+        const nx = worldPushX / pushLen;
+        const nz = worldPushZ / pushLen;
         const velDotN = this.velocity.x * nx + this.velocity.z * nz;
         if (velDotN < 0) {
           this.velocity.x -= velDotN * nx;

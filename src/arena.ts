@@ -3,6 +3,10 @@
  */
 
 import * as THREE from 'three';
+// @ts-ignore - JS texture modules
+import { createTexture as createGrassTexture } from '../tools/textures/grass.js';
+// @ts-ignore - JS texture modules
+import { createTexture as createCeramicTexture } from '../tools/textures/ceramic_gray.js';
 
 // Arena dimensions
 const ARENA_SIZE = 40;
@@ -33,13 +37,31 @@ export type Collider = CylinderCollider | BoxCollider;
 // Store colliders for export
 const colliders: Collider[] = [];
 
+// Cached textures
+let grassTexture: THREE.CanvasTexture | undefined;
+let ceramicTexture: THREE.CanvasTexture | undefined;
+
+function getGrassTexture(): THREE.CanvasTexture {
+  if (grassTexture) return grassTexture;
+  grassTexture = createGrassTexture(THREE, 256, 12345) as THREE.CanvasTexture;
+  grassTexture.repeat.set(10, 10);
+  return grassTexture;
+}
+
+function getCeramicTexture(): THREE.CanvasTexture {
+  if (ceramicTexture) return ceramicTexture;
+  ceramicTexture = createCeramicTexture(THREE, 256, 54321) as THREE.CanvasTexture;
+  ceramicTexture.repeat.set(1, 2);
+  return ceramicTexture;
+}
+
 /**
  * Create the arena ground plane
  */
 function createGround(): THREE.Mesh {
   const geometry = new THREE.PlaneGeometry(ARENA_SIZE, ARENA_SIZE);
   const material = new THREE.MeshStandardMaterial({
-    color: 0x3d5c3d,
+    map: getGrassTexture(),
     roughness: 0.9,
     metalness: 0.1
   });
@@ -61,7 +83,7 @@ function createPillar(x: number, z: number): THREE.Mesh {
     16
   );
   const material = new THREE.MeshStandardMaterial({
-    color: 0x8b7355,
+    map: getCeramicTexture(),
     roughness: 0.8,
     metalness: 0.1
   });

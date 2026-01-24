@@ -9,12 +9,13 @@
  */
 
 import * as THREE from 'three';
-import { createAxisGizmo } from './coords';
+import { createAxisGizmo, dirToYaw } from './coords';
 import { createArena, createArenaLighting, getColliders } from './arena';
 import { CameraRig } from './camera';
 import { PlayerController } from './player';
 import { TargetingSystem } from './targeting';
 import { INITIAL_ENTITIES, EntityDef } from './entities';
+import { ProceduralCharacterView, CharacterView, LocomotionState } from './character';
 
 // ============================================================================
 // Game State
@@ -25,6 +26,7 @@ interface GameState {
   renderer: THREE.WebGLRenderer;
   cameraRig: CameraRig;
   player: PlayerController;
+  playerView: CharacterView;
   targeting: TargetingSystem;
   entities: Map<string, THREE.Object3D>;
   clock: THREE.Clock;
@@ -141,26 +143,29 @@ function init(): GameState {
   axisGizmo.position.set(0, 0.01, 0);
   scene.add(axisGizmo);
 
-  // Create entities
+  // Create entities (NPCs get capsule mesh, player gets CharacterView)
   const entities = new Map<string, THREE.Object3D>();
-  let playerMesh: THREE.Object3D | null = null;
 
   for (const def of INITIAL_ENTITIES) {
-    const mesh = createEntityMesh(def);
-    scene.add(mesh);
-    entities.set(def.id, mesh);
-
-    if (def.id === 'player') {
-      playerMesh = mesh;
+    if (def.id !== 'player') {
+      const mesh = createEntityMesh(def);
+      scene.add(mesh);
+      entities.set(def.id, mesh);
     }
   }
 
-  // Create player controller
+  // Create player with CharacterView
   const playerDef = INITIAL_ENTITIES.find(e => e.id === 'player')!;
+  const playerView = new ProceduralCharacterView(playerDef.color);
+  playerView.root.position.set(...playerDef.position);
+  scene.add(playerView.root);
+  entities.set('player', playerView.root);
+
+  // Create player controller
   const player = new PlayerController(
     new THREE.Vector3(...playerDef.position)
   );
-  player.mesh = playerMesh;
+  player.mesh = playerView.root;
   player.attach();
   player.setColliders(getColliders());
 
@@ -196,6 +201,7 @@ function init(): GameState {
     renderer,
     cameraRig,
     player,
+    playerView,
     targeting,
     entities,
     clock,
@@ -215,6 +221,7 @@ function animate(state: GameState): void {
     renderer,
     cameraRig,
     player,
+    playerView,
     targeting,
     clock,
     debugElement
@@ -224,6 +231,30 @@ function animate(state: GameState): void {
 
   // Update player (pass camera yaw for movement direction)
   player.update(delta, cameraRig.yaw);
+
+  // Update player character view
+  const vel = player.velocity;
+  const speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
+  const isGrounded = player.position.y <= 0.01;
+
+  let locoState: LocomotionState = 'idle';
+  if (!isGrounded) {
+    locoState = vel.y > 0 ? 'jump' : 'fall';
+  } else if (speed > 4) {
+    locoState = 'run';
+  } else if (speed > 0.1) {
+    locoState = 'walk';
+  }
+
+  playerView.setLocomotion(locoState, speed / 6);
+
+  // Face movement direction when moving
+  if (speed > 0.1) {
+    const moveYaw = dirToYaw(new THREE.Vector3(vel.x, 0, vel.z));
+    playerView.setFacingYaw(-moveYaw); // Negate because our convention
+  }
+
+  playerView.update(delta);
 
   // Update camera to follow player
   cameraRig.update(player.position);
