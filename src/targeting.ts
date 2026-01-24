@@ -157,23 +157,33 @@ export class TargetingSystem {
     // Find the actual mesh with material
     mesh.traverse((child) => {
       if (child instanceof THREE.Mesh && child.material) {
-        // Store original material
-        this.originalMaterials.set(child, child.material);
+        const mat = child.material as THREE.MeshStandardMaterial;
+        // Only apply highlight if material supports emissive
+        if (mat.emissive !== undefined) {
+          // Store original values
+          this.originalMaterials.set(child, {
+            emissive: mat.emissive.clone(),
+            emissiveIntensity: mat.emissiveIntensity
+          } as unknown as THREE.Material);
 
-        // Clone material and add emissive highlight
-        const mat = (child.material as THREE.MeshStandardMaterial).clone();
-        mat.emissive = new THREE.Color(team === 'friendly' ? 0x00ff00 : 0xff0000);
-        mat.emissiveIntensity = 0.3;
-        child.material = mat;
+          // Apply highlight without cloning
+          mat.emissive = new THREE.Color(team === 'friendly' ? 0x00ff00 : 0xff0000);
+          mat.emissiveIntensity = 0.3;
+        }
       }
     });
   }
 
   private clearHighlight(): void {
-    // Restore original materials
-    this.originalMaterials.forEach((material, mesh) => {
+    // Restore original emissive values
+    this.originalMaterials.forEach((stored, mesh) => {
       if (mesh instanceof THREE.Mesh) {
-        mesh.material = material;
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        const original = stored as unknown as { emissive: THREE.Color; emissiveIntensity: number };
+        if (mat.emissive !== undefined && original.emissive) {
+          mat.emissive.copy(original.emissive);
+          mat.emissiveIntensity = original.emissiveIntensity;
+        }
       }
     });
     this.originalMaterials.clear();

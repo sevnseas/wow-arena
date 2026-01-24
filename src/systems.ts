@@ -202,40 +202,25 @@ export class ProjectileSystem {
     color: number,
     onHit: () => void
   ): void {
-    const direction = targetPos.clone().sub(startPos).normalize();
+    // Calculate direction and velocity
+    const dir = new THREE.Vector3().subVectors(targetPos, startPos).normalize();
+    const vel = dir.clone().multiplyScalar(speed);
 
-    // Offset start position forward so projectile spawns in front of caster
-    const offsetStart = startPos.clone().add(direction.clone().multiplyScalar(1.0));
+    // Start position: offset 1m forward from caster
+    const pos = startPos.clone().add(dir.clone().multiplyScalar(1.0));
 
-    // Container group for projectile + aura
-    const group = new THREE.Group();
-    group.position.copy(offsetStart);
-
-    // Main projectile sphere - larger and bright
-    const geometry = new THREE.SphereGeometry(0.3, 12, 12);
-    const material = new THREE.MeshBasicMaterial({
-      color,
-      transparent: false
-    });
-    const mesh = new THREE.Mesh(geometry, material);
-    group.add(mesh);
-
-    // Glowing aura around projectile
-    const auraGeo = new THREE.SphereGeometry(0.5, 8, 8);
-    const auraMat = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.4
-    });
-    const aura = new THREE.Mesh(auraGeo, auraMat);
-    group.add(aura);
-
-    this.scene.add(group);
+    // Simple sphere mesh
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.4, 12, 12),
+      new THREE.MeshBasicMaterial({ color })
+    );
+    mesh.position.copy(pos);
+    this.scene.add(mesh);
 
     this.projectiles.push({
       id: this.nextId++,
-      object: group,
-      velocity: direction.multiplyScalar(speed),
+      object: mesh,
+      velocity: vel,
       targetPos: targetPos.clone(),
       targetId,
       speed,
