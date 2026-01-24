@@ -248,8 +248,8 @@ export class PlayerController {
     const dz = this.position.z - col.z;
 
     // Transform to box local space (rotate by -rotation)
-    const localX = dx * cosR + dz * sinR;
-    const localZ = -dx * sinR + dz * cosR;
+    const localX = dx * cosR - dz * sinR;
+    const localZ = dx * sinR + dz * cosR;
 
     const halfW = col.width / 2;
     const halfD = col.depth / 2;
