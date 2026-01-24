@@ -41,6 +41,9 @@ interface GameState {
   casts: CastSystem;
   projectiles: ProjectileSystem;
   classSelectOpen: boolean;
+
+  // CC cube visuals: entityId -> cube mesh
+  ccCubes: Map<string, THREE.Mesh>;
 }
 
 // ============================================================================
@@ -171,6 +174,56 @@ function updateDebuffDisplay(state: GameState): void {
     el.className = 'debuff-icon';
     el.textContent = `${debuff.name} (${remaining}s)`;
     container.appendChild(el);
+  }
+}
+
+// CC debuff IDs that turn entities into cubes
+const CC_DEBUFFS = ['blind', 'polymorph'];
+
+function updateCCVisuals(state: GameState): void {
+  // Check each entity for CC debuffs
+  for (const [entityId, entityMesh] of state.entities) {
+    if (entityId === 'player') continue; // Player uses CharacterView
+
+    const debuffs = state.debuffs.getDebuffs(entityId);
+    const hasCC = debuffs.some(d => CC_DEBUFFS.includes(d.id));
+
+    if (hasCC && !state.ccCubes.has(entityId)) {
+      // Entity just got CC'd - create cube and hide original
+      const cube = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({
+          color: 0x8844ff,
+          roughness: 0.5,
+          metalness: 0.3
+        })
+      );
+      cube.position.copy(entityMesh.position);
+      cube.position.y = 1; // Center cube at entity height
+      cube.castShadow = true;
+      state.scene.add(cube);
+      state.ccCubes.set(entityId, cube);
+
+      // Hide original entity
+      entityMesh.visible = false;
+    } else if (!hasCC && state.ccCubes.has(entityId)) {
+      // CC expired - remove cube and show original
+      const cube = state.ccCubes.get(entityId)!;
+      state.scene.remove(cube);
+      cube.geometry.dispose();
+      (cube.material as THREE.Material).dispose();
+      state.ccCubes.delete(entityId);
+
+      // Show original entity
+      entityMesh.visible = true;
+    } else if (hasCC && state.ccCubes.has(entityId)) {
+      // Update cube position and rotation
+      const cube = state.ccCubes.get(entityId)!;
+      cube.position.copy(entityMesh.position);
+      cube.position.y = 1;
+      cube.rotation.y += 0.02;
+      cube.rotation.x += 0.01;
+    }
   }
 }
 
@@ -451,7 +504,8 @@ function init(): GameState {
     debuffs,
     casts,
     projectiles,
-    classSelectOpen: false
+    classSelectOpen: false,
+    ccCubes: new Map()
   };
 
   setupInput(state);
@@ -519,6 +573,7 @@ function animate(state: GameState): void {
   updateActionBar(state);
   updateCastBar(state);
   updateDebuffDisplay(state);
+  updateCCVisuals(state);
 
   // Debug info
   if (state.debugElement) {
