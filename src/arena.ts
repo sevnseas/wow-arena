@@ -4,9 +4,9 @@
 
 import * as THREE from 'three';
 // @ts-ignore - JS texture modules
-import { createTexture as createGrassTexture } from '../tools/textures/grass.js';
+import { createTexture as createGrassTexture } from './textures/grass.js';
 // @ts-ignore - JS texture modules
-import { createTexture as createCeramicTexture } from '../tools/textures/ceramic_gray.js';
+import { createTexture as createCeramicTexture } from './textures/ceramic_gray.js';
 
 // Arena dimensions
 const ARENA_SIZE = 40;
