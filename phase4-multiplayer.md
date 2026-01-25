@@ -418,6 +418,12 @@ This keeps combat logic unified and avoids special cases.
   - `src/net/game.ts` - NetworkGame orchestrator class
   - Supports ?mode=standalone (default) and ?mode=multiplayer
   - Custom server URL via ?server= param
+- **Integration complete**: Client network with main.ts
+  - Integrated NetworkGame with main.ts for multiplayer mode
+  - Separate animate loops for standalone vs multiplayer
+  - Dynamic remote entity mesh creation from network state
+  - Strategic debug logging in network modules
+  - `TESTING.md` - Local testing guide with commands
 
 ---
 
