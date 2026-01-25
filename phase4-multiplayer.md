@@ -217,14 +217,14 @@ This keeps combat logic unified and avoids special cases.
 - [x] Unit tests: server starts, accepts connection, tracks clients (12 tests)
 
 ## Phase 4.3: Server Game State
-- [ ] `server/src/state.ts` - `ServerGameState` class
-- [ ] `EntityState`: id, class, team, pos, vel, yaw, hp, maxHp, alive, respawnAt
-- [ ] `entities: Map<string, EntityState>`
-- [ ] Cooldowns: `Map<string, Map<abilityId, readyAt>>`
-- [ ] Debuffs: `Map<string, Debuff[]>`
-- [ ] Active casts: `Map<string, ActiveCast | null>`
-- [ ] Methods: `spawnEntity`, `removeEntity`, `getEntity`, `setPosition`, `applyDamage`, `kill`, `respawn`
-- [ ] Unit tests: spawn entity, damage reduces HP, kill sets alive=false
+- [x] `server/src/state.ts` - `ServerGameState` class
+- [x] `EntityState`: id, class, team, pos, vel, yaw, hp, maxHp, alive, respawnAt
+- [x] `entities: Map<string, EntityState>`
+- [x] Cooldowns: `Map<string, Map<abilityId, readyAt>>`
+- [x] Debuffs: `Map<string, Debuff[]>`
+- [x] Active casts: `Map<string, ActiveCast | null>`
+- [x] Methods: `spawnEntity`, `removeEntity`, `getEntity`, `setPosition`, `applyDamage`, `kill`, `respawn`
+- [x] Unit tests: spawn entity, damage reduces HP, kill sets alive=false (56 tests)
 
 ## Phase 4.4: Server Physics
 - [ ] `server/src/physics.ts` - Vec3 as `{x,y,z}` plain objects
@@ -345,6 +345,16 @@ This keeps combat logic unified and avoids special cases.
   - `server/src/index.ts` - ArenaServer class with WebSocket, tick loop, connection tracking
   - Ping/pong for latency measurement
   - 12 server tests passing (67 total)
+- **Phase 4.3 complete**: Server game state
+  - `server/src/state.ts` - ServerGameState class with full entity/combat management
+  - Entity lifecycle: spawn, remove, position/velocity, yaw
+  - Health: damage, heal, kill, respawn with timer
+  - Cooldowns: tick-based tracking per entity per ability
+  - Debuffs: apply, remove, expiry, tag checks
+  - Active casts: start, interrupt, completion detection
+  - Projectiles: spawn, remove, velocity calculation
+  - Snapshots: entity and projectile snapshots for network sync
+  - 56 state tests passing (123 total)
 
 ---
 
