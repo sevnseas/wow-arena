@@ -252,12 +252,13 @@ This keeps combat logic unified and avoids special cases.
 - [x] Unit tests: shadowstep moves entity behind target, frostbolt spawns projectile, polymorph applies CC (30 tests)
 
 ## Phase 4.7: Server Snapshots & Events
-- [ ] `server/src/snapshot.ts` - `buildSnapshot(state): Snapshot`
-- [ ] Snapshot includes: tick, all entity states, all active projectiles
-- [ ] Event queue: accumulate events during tick, flush with snapshot
-- [ ] Broadcast: send snapshot + events to all clients each tick
-- [ ] Late join: send full state snapshot on connect
-- [ ] Unit tests: snapshot contains expected entity data, events queue and flush correctly
+- [x] `server/src/snapshot.ts` - `buildSnapshot(state): Snapshot`
+- [x] Snapshot includes: tick, all entity states, all active projectiles
+- [x] Event queue: accumulate events during tick, flush with snapshot
+- [x] Broadcast: send snapshot + events to all clients each tick
+- [x] Late join: send full state snapshot on connect
+- [x] Unit tests: snapshot contains expected entity data, events queue and flush correctly (14 tests)
+- [x] Integrated full tick loop in server: abilities, projectiles, debuffs, respawns, broadcast
 
 ## Phase 4.8: Client Network Layer
 - [ ] `src/net/socket.ts` - WebSocket wrapper with connect/disconnect/reconnect
@@ -378,6 +379,13 @@ This keeps combat logic unified and avoids special cases.
   - Debuffs: apply, expire, remove
   - Death/respawn integration
   - 30 ability tests passing (213 total)
+- **Phase 4.7 complete**: Server snapshots & events + full integration
+  - `server/src/snapshot.ts` - buildSnapshot, event queue
+  - Full server tick loop: process abilities, casts, projectiles, debuffs, respawns
+  - Entity spawn/remove events on connect/disconnect
+  - Broadcast snapshots to all clients each tick
+  - Send initial snapshot on connect for late join
+  - 14 snapshot tests passing (227 total)
 
 ---
 
