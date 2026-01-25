@@ -227,11 +227,11 @@ This keeps combat logic unified and avoids special cases.
 - [x] Unit tests: spawn entity, damage reduces HP, kill sets alive=false (56 tests)
 
 ## Phase 4.4: Server Physics
-- [ ] `server/src/physics.ts` - Vec3 as `{x,y,z}` plain objects
-- [ ] `applyMovement(entity, input, dt)` - velocity from input, apply gravity
-- [ ] `resolveCollisions(entity)` - pillar cylinders, arena bounds, ramp box
-- [ ] Port collision math from `player.ts` without Three.js vectors
-- [ ] Unit tests: entity stops at wall, slides along pillar, stays in bounds
+- [x] `server/src/physics.ts` - Vec3 as `{x,y,z}` plain objects
+- [x] `applyMovement(entity, input, dt)` - velocity from input, apply gravity
+- [x] `resolveCollisions(entity)` - pillar cylinders, arena bounds, ramp box
+- [x] Port collision math from `player.ts` without Three.js vectors
+- [x] Unit tests: entity stops at wall, slides along pillar, stays in bounds (35 tests)
 
 ## Phase 4.5: Server Input Processing
 - [ ] `server/src/input.ts` - `InputQueue` per player
@@ -355,6 +355,14 @@ This keeps combat logic unified and avoids special cases.
   - Projectiles: spawn, remove, velocity calculation
   - Snapshots: entity and projectile snapshots for network sync
   - 56 state tests passing (123 total)
+- **Phase 4.4 complete**: Server physics
+  - `server/src/physics.ts` - pure TypeScript physics without Three.js
+  - Vec3 helper functions (add, sub, scale, normalize, distance)
+  - Movement: yawToForward, applyMovement with input transformation
+  - Collision: cylinder (pillars), box (ramps), arena bounds
+  - Projectiles: position update, hit detection
+  - Abilities: getPositionBehindTarget, getBlinkDestination, findValidPositionNear
+  - 35 physics tests passing (158 total)
 
 ---
 
