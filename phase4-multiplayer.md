@@ -241,15 +241,15 @@ This keeps combat logic unified and avoids special cases.
 - [x] Unit tests: valid input updates position, invalid input rejected, rate limit enforced (25 tests)
 
 ## Phase 4.6: Server Abilities
-- [ ] `server/src/abilities.ts` - `executeAbility(state, casterId, abilityId, targetId)`
-- [ ] Instant abilities: teleport (shadowstep, blink), melee hit, debuff apply (blind)
-- [ ] Cast abilities: track in `activeCasts`, complete after duration, call effect
-- [ ] Cast interruption: movement cancels, stun cancels
-- [ ] Projectile spawn: add to `state.projectiles`, track position each tick
-- [ ] Projectile hit: check distance to target, apply effect, remove projectile
-- [ ] Debuff lifecycle: apply with duration, remove when expired, emit events
-- [ ] Damage/heal: modify HP, check death condition
-- [ ] Unit tests: shadowstep moves entity behind target, frostbolt spawns projectile, polymorph applies CC
+- [x] `server/src/abilities.ts` - `executeAbility(state, casterId, abilityId, targetId)`
+- [x] Instant abilities: teleport (shadowstep, blink), melee hit, debuff apply (blind)
+- [x] Cast abilities: track in `activeCasts`, complete after duration, call effect
+- [x] Cast interruption: movement cancels (in input.ts), stun cancels
+- [x] Projectile spawn: add to `state.projectiles`, track position each tick
+- [x] Projectile hit: check distance to target, apply effect, remove projectile
+- [x] Debuff lifecycle: apply with duration, remove when expired, emit events
+- [x] Damage/heal: modify HP, check death condition
+- [x] Unit tests: shadowstep moves entity behind target, frostbolt spawns projectile, polymorph applies CC (30 tests)
 
 ## Phase 4.7: Server Snapshots & Events
 - [ ] `server/src/snapshot.ts` - `buildSnapshot(state): Snapshot`
@@ -370,6 +370,14 @@ This keeps combat logic unified and avoids special cases.
   - Rate limiting (max 3 inputs per tick)
   - Sequence number tracking for client reconciliation
   - 25 input tests passing (183 total)
+- **Phase 4.6 complete**: Server abilities
+  - `server/src/abilities.ts` - ability execution and tick updates
+  - Instant: Shadowstep, Hemorrhage, Blind, Blink, Psychic Scream
+  - Cast: Frostbolt, Polymorph, Heal, Smite
+  - Projectiles: spawn, update, hit detection, damage
+  - Debuffs: apply, expire, remove
+  - Death/respawn integration
+  - 30 ability tests passing (213 total)
 
 ---
 
