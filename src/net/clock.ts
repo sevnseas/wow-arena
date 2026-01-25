@@ -86,10 +86,16 @@ export class NetworkClock {
       // First sample - use directly
       this.state.rtt = rtt;
       this.state.serverOffset = offset;
+      console.log(`[Clock] First RTT sample: ${rtt.toFixed(0)}ms, offset: ${offset.toFixed(0)}ms`);
     } else {
       // Exponential moving average for smoothing
       this.state.rtt = this.state.rtt * (1 - this.smoothingFactor) + rtt * this.smoothingFactor;
       this.state.serverOffset = this.state.serverOffset * (1 - this.smoothingFactor) + offset * this.smoothingFactor;
+
+      // Log every 5th sample to avoid spam
+      if (this.state.sampleCount % 5 === 0) {
+        console.log(`[Clock] RTT: ${this.state.rtt.toFixed(0)}ms (sample #${this.state.sampleCount})`);
+      }
     }
 
     this.state.lastPingTime = now;

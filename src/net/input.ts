@@ -122,7 +122,13 @@ export class InputManager {
       return [];
     }
 
+    const prevAcked = this.lastAckedSeq;
     this.lastAckedSeq = ackedSeq;
+
+    // Log significant acknowledgment gaps (more than 5 inputs at once)
+    if (ackedSeq - prevAcked > 5) {
+      console.log(`[InputManager] Acked ${ackedSeq - prevAcked} inputs (${prevAcked} -> ${ackedSeq})`);
+    }
 
     // Remove acknowledged inputs and return them
     const acknowledged: PendingInput[] = [];

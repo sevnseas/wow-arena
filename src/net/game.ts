@@ -245,6 +245,7 @@ export class NetworkGame {
   }
 
   private handleWelcome(welcome: Welcome): void {
+    console.log('[NetworkGame] Welcome received, playerId:', welcome.playerId);
     this.localPlayerId = welcome.playerId;
     this.networkState.setLocalPlayerId(welcome.playerId);
 
@@ -264,10 +265,18 @@ export class NetworkGame {
       const serverState = this.networkState.getLocalPlayerServerState();
       if (serverState) {
         // Acknowledge inputs
-        this.inputManager.acknowledgeUpTo(snapshot.ackedSeq);
+        const acked = this.inputManager.acknowledgeUpTo(snapshot.ackedSeq);
 
         // Get unacked inputs for replay
         const unackedInputs = this.inputManager.getUnacknowledgedMoveInputs();
+
+        // Log reconciliation periodically (every ~1 second of snapshots)
+        if (snapshot.tick % 20 === 0) {
+          console.log(
+            `[NetworkGame] Snapshot tick=${snapshot.tick} ackedSeq=${snapshot.ackedSeq} ` +
+            `acked=${acked.length} unacked=${unackedInputs.length} entities=${snapshot.entities.length}`
+          );
+        }
 
         // Reconcile
         this.prediction.reconcile(serverState, snapshot.ackedSeq, unackedInputs);
@@ -276,6 +285,7 @@ export class NetworkGame {
   }
 
   private handleDisconnect(): void {
+    console.log('[NetworkGame] Disconnected, resetting state');
     this.initialized = false;
     this.inputCapture.detach();
     this.clock.stop();

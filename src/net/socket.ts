@@ -71,7 +71,7 @@ export class GameSocket {
       this.ws = new WebSocket(this.config.url);
 
       this.ws.onopen = () => {
-        console.log('[Socket] Connected');
+        console.log('[Socket] WebSocket open, waiting for Welcome...');
         this.reconnectAttempts = 0;
         // State will be set to 'connected' when we receive Welcome
       };

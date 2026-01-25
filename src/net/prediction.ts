@@ -185,10 +185,12 @@ export class ClientPrediction {
 
     if (errorMag > this.config.maxPredictionError) {
       // Large error - snap immediately
+      console.warn(`[Prediction] Large error ${errorMag.toFixed(2)} > ${this.config.maxPredictionError}, snapping to server pos`);
       this.predicted = { ...reconciled };
       this.positionError = { x: 0, y: 0, z: 0 };
     } else if (errorMag > this.config.snapThreshold) {
       // Medium error - store for gradual correction
+      console.log(`[Prediction] Correction needed: error=${errorMag.toFixed(3)}`);
       this.predicted = { ...reconciled };
       this.positionError = { x: errorX, y: errorY, z: errorZ };
     } else {

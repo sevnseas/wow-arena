@@ -1,11 +1,16 @@
 /**
- * WoW Arena Sandbox - Phase 3
+ * WoW Arena Sandbox - Phase 4
  *
  * Features:
  * - Class selection (Tab)
  * - Action bar with abilities
  * - Cooldowns, debuffs, casting, projectiles
- * - Rogue/Mage/Priest with 3 abilities each
+ * - Multiplayer support (server-authoritative)
+ *
+ * URL params:
+ *   ?mode=standalone  - Local only (default)
+ *   ?mode=multiplayer - Connect to server
+ *   ?server=ws://host:port - Custom server URL
  */
 
 import * as THREE from 'three';
@@ -18,6 +23,8 @@ import { INITIAL_ENTITIES, EntityDef } from './entities';
 import { ProceduralCharacterView, CharacterView, LocomotionState } from './character';
 import { CooldownManager, DebuffManager, CastSystem, ProjectileSystem } from './systems';
 import { ClassName, AbilityContext, getClassAbilities, getAbilityByKey } from './abilities';
+import { getModeFromUrl, GameMode } from './mode';
+import { NetworkGame, ConnectionState } from './net';
 
 // ============================================================================
 // Game State
@@ -44,6 +51,10 @@ interface GameState {
 
   // CC cube visuals: entityId -> cube mesh
   ccCubes: Map<string, THREE.Mesh>;
+
+  // Phase 4: Network state
+  mode: GameMode;
+  network: NetworkGame | null;
 }
 
 // ============================================================================
@@ -104,6 +115,14 @@ function createEntityMesh(def: EntityDef): THREE.Group {
 // ============================================================================
 // UI Functions
 // ============================================================================
+
+function updateConnectionStatus(state: ConnectionState): void {
+  const statusEl = document.getElementById('connection-status');
+  if (statusEl) {
+    statusEl.textContent = state;
+    statusEl.className = `connection-status ${state}`;
+  }
+}
 
 function updateActionBar(state: GameState): void {
   const abilities = getClassAbilities(state.currentClass);
@@ -266,6 +285,15 @@ function tryUseAbility(state: GameState, key: string): void {
   const ability = getAbilityByKey(state.currentClass, key);
   if (!ability) return;
 
+  // In multiplayer mode, send to server
+  if (state.mode === 'multiplayer' && state.network) {
+    const target = state.targeting.currentTarget;
+    state.network.useAbility(ability.id, target?.id || null);
+    flashSlotPressed(key);
+    return;
+  }
+
+  // Standalone mode - local execution
   // Check cooldown
   if (!state.cooldowns.isReady(ability.id)) {
     flashSlotError(key);
@@ -415,16 +443,20 @@ function setupInput(state: GameState): void {
 // ============================================================================
 
 function init(): GameState {
-  console.log('[init] Starting...');
+  // Detect game mode
+  const { mode, config } = getModeFromUrl();
+  console.log(`[Game] Starting in ${mode} mode`);
+  if (mode === 'multiplayer') {
+    console.log(`[Game] Server URL: ${config.serverUrl}`);
+  }
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1a1a2e);
   scene.fog = new THREE.Fog(0x1a1a2e, 30, 60);
-  console.log('[init] Scene created');
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   if (!renderer.getContext()) {
-    console.error('[init] WebGL context failed!');
+    console.error('[Game] WebGL context failed!');
   }
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -433,19 +465,15 @@ function init(): GameState {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   document.body.appendChild(renderer.domElement);
-  console.log('[init] Renderer created, canvas size:', window.innerWidth, 'x', window.innerHeight);
 
   const cameraRig = new CameraRig();
   cameraRig.attach(renderer.domElement);
 
-  console.log('[init] Creating arena...');
   const arena = createArena();
   scene.add(arena);
-  console.log('[init] Arena added, children:', arena.children.length);
 
   const lighting = createArenaLighting();
   scene.add(lighting);
-  console.log('[init] Lighting added');
 
   const axisGizmo = createAxisGizmo(2);
   axisGizmo.position.set(0, 0.01, 0);
@@ -453,11 +481,15 @@ function init(): GameState {
 
   const entities = new Map<string, THREE.Object3D>();
 
-  for (const def of INITIAL_ENTITIES) {
-    if (def.id !== 'player') {
-      const mesh = createEntityMesh(def);
-      scene.add(mesh);
-      entities.set(def.id, mesh);
+  // In standalone mode, create all entities
+  // In multiplayer mode, only create player initially (others come from server)
+  if (mode === 'standalone') {
+    for (const def of INITIAL_ENTITIES) {
+      if (def.id !== 'player') {
+        const mesh = createEntityMesh(def);
+        scene.add(mesh);
+        entities.set(def.id, mesh);
+      }
     }
   }
 
@@ -471,16 +503,23 @@ function init(): GameState {
     new THREE.Vector3(...playerDef.position)
   );
   player.mesh = playerView.root;
-  player.attach();
   player.setColliders(getColliders());
+
+  // Only attach local input in standalone mode
+  // In multiplayer, NetworkGame handles input
+  if (mode === 'standalone') {
+    player.attach();
+  }
 
   const targeting = new TargetingSystem(cameraRig.camera);
   targeting.attach(renderer.domElement);
 
-  for (const [id, mesh] of entities) {
-    if (id !== 'player') {
-      const def = INITIAL_ENTITIES.find(e => e.id === id)!;
-      targeting.registerTargetable(mesh, id, def.name, def.team);
+  if (mode === 'standalone') {
+    for (const [id, mesh] of entities) {
+      if (id !== 'player') {
+        const def = INITIAL_ENTITIES.find(e => e.id === id)!;
+        targeting.registerTargetable(mesh, id, def.name, def.team);
+      }
     }
   }
 
@@ -499,6 +538,36 @@ function init(): GameState {
   const casts = new CastSystem();
   const projectiles = new ProjectileSystem(scene);
 
+  // Create network game if in multiplayer mode
+  let network: NetworkGame | null = null;
+  if (mode === 'multiplayer') {
+    network = new NetworkGame(
+      {
+        serverUrl: config.serverUrl,
+        onConnectionChange: (state) => {
+          console.log(`[Game] Connection state: ${state}`);
+          updateConnectionStatus(state);
+        },
+        onWelcome: (welcome) => {
+          console.log(`[Game] Welcome! Player ID: ${welcome.playerId}`);
+          // Initialize prediction with current position
+          network!.initializeLocalPlayer(
+            { x: playerDef.position[0], y: playerDef.position[1], z: playerDef.position[2] },
+            cameraRig.yaw
+          );
+        },
+        onEvents: (events) => {
+          console.log(`[Game] Received ${events.length} events`);
+          // TODO: Handle events (Phase 4.12)
+        },
+      },
+      () => cameraRig.yaw
+    );
+
+    // Start connection
+    network.connect();
+  }
+
   const state: GameState = {
     scene,
     renderer,
@@ -515,7 +584,9 @@ function init(): GameState {
     casts,
     projectiles,
     classSelectOpen: false,
-    ccCubes: new Map()
+    ccCubes: new Map(),
+    mode,
+    network
   };
 
   setupInput(state);
@@ -533,6 +604,19 @@ function animate(state: GameState): void {
 
   const delta = state.clock.getDelta();
 
+  if (state.mode === 'multiplayer' && state.network) {
+    // Multiplayer mode - use network state
+    animateMultiplayer(state, delta);
+  } else {
+    // Standalone mode - use local state
+    animateStandalone(state, delta);
+  }
+
+  // Render
+  state.renderer.render(state.scene, state.cameraRig.camera);
+}
+
+function animateStandalone(state: GameState, delta: number): void {
   // Cancel cast on movement
   if (state.casts.isCasting) {
     const vel = state.player.velocity;
@@ -589,9 +673,93 @@ function animate(state: GameState): void {
   if (state.debugElement) {
     state.debugElement.textContent = `${state.currentClass} | ${state.player.getDebugInfo()}`;
   }
+}
 
-  // Render
-  state.renderer.render(state.scene, state.cameraRig.camera);
+function animateMultiplayer(state: GameState, delta: number): void {
+  const network = state.network!;
+
+  // Update network and get local player state
+  const localState = network.update(delta);
+
+  if (localState) {
+    // Update player position from prediction
+    state.player.position.set(localState.pos.x, localState.pos.y, localState.pos.z);
+    state.playerView.root.position.copy(state.player.position);
+
+    // Update player character view based on velocity
+    const speed = Math.sqrt(localState.vel.x ** 2 + localState.vel.z ** 2);
+
+    let locoState: LocomotionState = 'idle';
+    if (!localState.isGrounded) {
+      locoState = localState.vel.y > 0 ? 'jump' : 'fall';
+    } else if (speed > 4) {
+      locoState = 'run';
+    } else if (speed > 0.1) {
+      locoState = 'walk';
+    }
+
+    state.playerView.setLocomotion(locoState, speed / 6);
+
+    if (speed > 0.1) {
+      const moveYaw = Math.atan2(localState.vel.x, localState.vel.z);
+      state.playerView.setFacingYaw(-moveYaw);
+    }
+  }
+
+  state.playerView.update(delta);
+
+  // Update camera
+  state.cameraRig.update(state.player.position);
+
+  // Update targeting
+  state.targeting.update(state.player.position);
+
+  // Update remote entities from network state
+  const remoteEntities = network.getRemoteEntities();
+  for (const remote of remoteEntities) {
+    let mesh = state.entities.get(remote.id);
+
+    if (!mesh) {
+      // Create new entity mesh
+      console.log(`[Game] Creating mesh for remote entity: ${remote.id}`);
+      const group = new THREE.Group();
+      group.name = remote.id;
+
+      // Simple capsule for now
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35, 0.35, 1.3, 16),
+        new THREE.MeshStandardMaterial({
+          color: remote.team === 'friendly' ? 0x00ff88 : 0xff4444,
+          roughness: 0.7
+        })
+      );
+      body.position.y = 1;
+      body.castShadow = true;
+      group.add(body);
+
+      state.scene.add(group);
+      state.entities.set(remote.id, group);
+      state.targeting.registerTargetable(group, remote.id, remote.name, remote.team as 'friendly' | 'enemy');
+      mesh = group;
+    }
+
+    // Update position and rotation
+    mesh.position.set(remote.pos.x, remote.pos.y, remote.pos.z);
+    mesh.rotation.y = -remote.yaw;
+
+    // Hide if dead
+    mesh.visible = remote.alive;
+  }
+
+  // Update UI
+  updateActionBar(state);
+
+  // Debug info
+  if (state.debugElement) {
+    const connState = network.getConnectionState();
+    const rtt = network.getRTT();
+    state.debugElement.textContent = `${state.currentClass} | ${connState} | RTT: ${rtt.toFixed(0)}ms | ${network.getDebugInfo()}`;
+  }
 }
 
 // ============================================================================
@@ -601,8 +769,13 @@ function animate(state: GameState): void {
 const gameState = init();
 animate(gameState);
 
-console.log('WoW Arena Sandbox - Phase 3');
+console.log('WoW Arena Sandbox - Phase 4');
 console.log('Controls:');
 console.log('  WASD: Move | Space: Jump');
 console.log('  Tab: Class Selection');
 console.log('  1-3: Abilities | Click: Target');
+console.log('');
+console.log('URL params:');
+console.log('  ?mode=standalone  - Local only (default)');
+console.log('  ?mode=multiplayer - Connect to server');
+console.log('  ?server=ws://localhost:8080 - Custom server');
