@@ -201,12 +201,12 @@ This keeps combat logic unified and avoids special cases.
 # Implementation Tasks
 
 ## Phase 4.1: Shared Foundation
-- [ ] Create `src/shared/` directory structure
-- [ ] Extract `EntityDef`, `ClassName`, `Team` types to `src/shared/types.ts`
-- [ ] Extract ability metadata to `src/shared/abilities.ts` (id, name, cooldown, range, castTime - no Three.js)
-- [ ] Extract physics constants to `src/shared/physics.ts` (gravity, speed, arena bounds, pillar positions)
-- [ ] Define protocol types in `src/shared/protocol.ts` (ClientMessage, ServerMessage unions)
-- [ ] Add vitest, write serialization round-trip tests for protocol types
+- [x] Create `src/shared/` directory structure
+- [x] Extract `EntityDef`, `ClassName`, `Team` types to `src/shared/types.ts`
+- [x] Extract ability metadata to `src/shared/abilities.ts` (id, name, cooldown, range, castTime - no Three.js)
+- [x] Extract physics constants to `src/shared/physics.ts` (gravity, speed, arena bounds, pillar positions)
+- [x] Define protocol types in `src/shared/protocol.ts` (ClientMessage, ServerMessage unions)
+- [x] Add vitest, write serialization round-trip tests for protocol types (55 tests passing)
 
 ## Phase 4.2: Server Skeleton
 - [ ] Create `server/` with `package.json` (ws, typescript, vitest)
@@ -332,6 +332,13 @@ This keeps combat logic unified and avoids special cases.
 - Created branch `phase4-multiplayer`
 - Analyzed existing codebase architecture
 - Documented implementation tasks
+- **Phase 4.1 complete**: Shared foundation
+  - `src/shared/types.ts` - Vec3, Team, ClassName, EntityDef, Collider, Debuff, EntitySnapshot, ProjectileSnapshot
+  - `src/shared/abilities.ts` - AbilityMeta, CLASS_ABILITIES, getAbilityById, getAbilityByKey
+  - `src/shared/physics.ts` - movement constants, arena layout, buildColliders(), spawn positions, tick rate
+  - `src/shared/protocol.ts` - ClientMessage, ServerMessage unions, encode/decode helpers
+  - `src/shared/index.ts` - barrel export
+  - Added vitest, 55 tests passing
 
 ---
 
