@@ -209,12 +209,12 @@ This keeps combat logic unified and avoids special cases.
 - [x] Add vitest, write serialization round-trip tests for protocol types (55 tests passing)
 
 ## Phase 4.2: Server Skeleton
-- [ ] Create `server/` with `package.json` (ws, typescript, vitest)
-- [ ] `server/tsconfig.json` targeting Node, importing from `../src/shared`
-- [ ] `server/src/index.ts` - WebSocket server on configurable port
-- [ ] Connection tracking: assign playerId on connect, remove on disconnect
-- [ ] Fixed tick loop (20Hz) with `setInterval`
-- [ ] Unit tests: server starts, accepts connection, tracks clients
+- [x] Create `server/` with `package.json` (ws, typescript, vitest)
+- [x] `server/tsconfig.json` targeting Node, importing from `../src/shared`
+- [x] `server/src/index.ts` - WebSocket server on configurable port
+- [x] Connection tracking: assign playerId on connect, remove on disconnect
+- [x] Fixed tick loop (20Hz) with `setInterval`
+- [x] Unit tests: server starts, accepts connection, tracks clients (12 tests)
 
 ## Phase 4.3: Server Game State
 - [ ] `server/src/state.ts` - `ServerGameState` class
@@ -339,6 +339,12 @@ This keeps combat logic unified and avoids special cases.
   - `src/shared/protocol.ts` - ClientMessage, ServerMessage unions, encode/decode helpers
   - `src/shared/index.ts` - barrel export
   - Added vitest, 55 tests passing
+- **Phase 4.2 complete**: Server skeleton
+  - `server/package.json` - ws, tsx, typescript, vitest dependencies
+  - `server/tsconfig.json` - Node ESM config with path alias to shared
+  - `server/src/index.ts` - ArenaServer class with WebSocket, tick loop, connection tracking
+  - Ping/pong for latency measurement
+  - 12 server tests passing (67 total)
 
 ---
 
