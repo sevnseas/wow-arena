@@ -234,11 +234,11 @@ This keeps combat logic unified and avoids special cases.
 - [x] Unit tests: entity stops at wall, slides along pillar, stays in bounds (35 tests)
 
 ## Phase 4.5: Server Input Processing
-- [ ] `server/src/input.ts` - `InputQueue` per player
-- [ ] `processMoveInput(playerId, msg)` - validate, apply physics, store seq for ack
-- [ ] `processAbilityInput(playerId, msg)` - validate cooldown, range, target; queue cast or execute instant
-- [ ] Input rate limiting (max 60 inputs/sec per player)
-- [ ] Unit tests: valid input updates position, invalid input rejected, rate limit enforced
+- [x] `server/src/input.ts` - `InputProcessor` class with per-player state
+- [x] `processMoveInput(playerId, msg)` - validate, apply physics, store seq for ack
+- [x] `processAbilityInput(playerId, msg)` - validate cooldown, range, target; queue cast or execute instant
+- [x] Input rate limiting (max 3 inputs per tick per player)
+- [x] Unit tests: valid input updates position, invalid input rejected, rate limit enforced (25 tests)
 
 ## Phase 4.6: Server Abilities
 - [ ] `server/src/abilities.ts` - `executeAbility(state, casterId, abilityId, targetId)`
@@ -363,6 +363,13 @@ This keeps combat logic unified and avoids special cases.
   - Projectiles: position update, hit detection
   - Abilities: getPositionBehindTarget, getBlinkDestination, findValidPositionNear
   - 35 physics tests passing (158 total)
+- **Phase 4.5 complete**: Server input processing
+  - `server/src/input.ts` - InputProcessor with per-player physics state
+  - MoveInput: validation, physics application, CC check, cast interruption
+  - AbilityInput: cooldown, range, target validation
+  - Rate limiting (max 3 inputs per tick)
+  - Sequence number tracking for client reconciliation
+  - 25 input tests passing (183 total)
 
 ---
 
