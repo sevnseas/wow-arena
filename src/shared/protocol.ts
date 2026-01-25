@@ -2,7 +2,10 @@
  * Network protocol types - messages between client and server
  */
 
-import type { Vec3, EntitySnapshot, ProjectileSnapshot, ClassName, Team } from './types';
+import type { Vec3, EntitySnapshot, ProjectileSnapshot, ClassName } from './types';
+
+// Re-export snapshot types for convenience
+export type { EntitySnapshot, ProjectileSnapshot } from './types';
 
 // ============================================================================
 // Client -> Server Messages
