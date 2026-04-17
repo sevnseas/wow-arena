@@ -35,27 +35,35 @@ function removeRootMotionXZ(clip: THREE.AnimationClip): void {
 
 // All Mixamo rigs share the same mixamorigXxx bone names, so animations are
 // interchangeable. Each character can have a preferred native set.
+//
+// Split into ESSENTIAL (small, load-blocking) and OPTIONAL (large, lazy).
+// The character is playable as soon as essentials finish; optional clips
+// register themselves into the mixer when they arrive in the background.
 type AnimFiles = Record<AnimName, string>;
 
-const MARIA_ANIMS: AnimFiles = {
+const MARIA_ESSENTIAL: Partial<AnimFiles> = {
   idle:       'idle.fbx',
   walk:       'walk.fbx',
   run:        'run.fbx',
   run_stop:   'run_stop.fbx',
   turn_left:  'turn_left.fbx',
   turn_right: 'turn_right.fbx',
-  jump:       'jump_mutant.fbx',
-  cast_spell: 'cast_spell.fbx',
-  cast_heal:  'cast_heal.fbx',
+};
+const MARIA_OPTIONAL: Partial<AnimFiles> = {
+  jump:       'jump_mutant.fbx',   // ~20 MB cross-rig
+  cast_spell: 'cast_spell.fbx',   // ~20 MB cross-rig
+  cast_heal:  'cast_heal.fbx',    // ~20 MB cross-rig
 };
 
-const MUTANT_ANIMS: AnimFiles = {
+const MUTANT_ESSENTIAL: Partial<AnimFiles> = {
   idle:       'mutant_breathing_idle.fbx',
   walk:       'mutant_walking.fbx',
   run:        'mutant_run.fbx',
-  run_stop:   'mutant_run.fbx',   // no dedicated stop — reuse run and let game fade
+  run_stop:   'mutant_run.fbx',
   turn_left:  'mutant_left_turn_45.fbx',
   turn_right: 'mutant_right_turn_45.fbx',
+};
+const MUTANT_OPTIONAL: Partial<AnimFiles> = {
   jump:       'mutant_jumping.fbx',
   cast_spell: 'mutant_swiping.fbx',
   cast_heal:  'mutant_flexing_muscles.fbx',
@@ -86,45 +94,47 @@ export class MixamoCharacterView implements CharacterView {
     const loadFbx = (url: string): Promise<THREE.Group> =>
       new Promise((res, rej) => loader.load(url, res, undefined, rej));
 
-    const ANIM_FILES = charFile === 'mutant' ? MUTANT_ANIMS : MARIA_ANIMS;
+    const isMutant = charFile === 'mutant';
+    const essential = isMutant ? MUTANT_ESSENTIAL : MARIA_ESSENTIAL;
+    const optional  = isMutant ? MUTANT_OPTIONAL  : MARIA_OPTIONAL;
 
-    // Load character mesh first (must succeed), then all anims in parallel.
-    // allSettled so a missing/broken anim file never kills the whole load.
-    const animEntries = Object.entries(ANIM_FILES) as [AnimName, string][];
-    const mesh = await loadFbx(`${basePath}/${charFile}.fbx`);
-    const animResults = await Promise.allSettled(
-      animEntries.map(([, file]) => loadFbx(`${basePath}/${file}`))
-    );
+    // 1. Mesh + essential anims load in parallel — character is playable after this
+    const essentialEntries = Object.entries(essential) as [AnimName, string][];
+    const [mesh, ...essentialFbxs] = await Promise.all([
+      loadFbx(`${basePath}/${charFile}.fbx`),
+      ...essentialEntries.map(([, f]) => loadFbx(`${basePath}/${f}`)),
+    ]);
 
-    // Mixamo FBX is in cm — scale to metres
     mesh.scale.setScalar(0.01);
     mesh.traverse((c: any) => {
       if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
     });
 
     const mixer = new THREE.AnimationMixer(mesh);
-    const view = new MixamoCharacterView(mesh, mixer);
+    const view  = new MixamoCharacterView(mesh, mixer);
 
-    animResults.forEach((result, i) => {
-      const [name] = animEntries[i];
-      if (result.status === 'rejected') {
-        console.warn(`⚠ Skipped ${ANIM_FILES[name]}: ${result.reason}`);
-        return;
-      }
-      const clip = result.value.animations[0];
-      if (!clip) { console.warn(`No clip in ${ANIM_FILES[name]}`); return; }
+    const registerClip = (name: AnimName, fbx: THREE.Group) => {
+      const clip = fbx.animations[0];
+      if (!clip) { console.warn(`No clip in ${name}`); return; }
       clip.name = name;
-      // Strip "ArmatureName|" prefix Mixamo puts on separate-file animations
       clip.tracks.forEach(t => { t.name = t.name.replace(/^[^|]+\|/, ''); });
-      // Remove root motion: zero out XZ translation on the hip/root bone so
-      // the game's movement system owns position — keep Y for vertical bounce.
       removeRootMotionXZ(clip);
-      const action = mixer.clipAction(clip);
-      view.clips.set(name, action);
+      view.clips.set(name, mixer.clipAction(clip));
       console.log(`✓ ${name} (${clip.duration.toFixed(2)}s)`);
+    };
+
+    essentialFbxs.forEach((fbx, i) => registerClip(essentialEntries[i][0], fbx));
+    view.play('idle');
+
+    // 2. Optional (large) anims load in the background — available whenever ready
+    const optionalEntries = Object.entries(optional) as [AnimName, string][];
+    Promise.allSettled(optionalEntries.map(([, f]) => loadFbx(`${basePath}/${f}`))).then(results => {
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') registerClip(optionalEntries[i][0], r.value);
+        else console.warn(`⚠ Optional anim failed: ${optionalEntries[i][0]}`);
+      });
     });
 
-    view.play('idle');
     return view;
   }
 

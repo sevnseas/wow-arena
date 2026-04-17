@@ -81,6 +81,7 @@ const ANIMS_CROSS = [
 ];
 
 let showCross = false;
+let currentCharFile = 'character';
 function getAnims() { return showCross ? ANIMS_CROSS : ANIMS_NATIVE; }
 
 const BASE = '/threejs-arena/models';
@@ -160,8 +161,9 @@ function makeLabel(text) {
 }
 
 async function loadChar(charFile) {
+  currentCharFile = charFile;
   clearScene();
-  document.getElementById('ui').innerHTML = '<span style="color:#aaa">Loading character…</span>';
+  document.getElementById('ui').innerHTML = '<span style="color:#aaa">Loading…</span>';
   document.getElementById('btn-maria').classList.toggle('focused',  charFile === 'character');
   document.getElementById('btn-mutant').classList.toggle('focused', charFile === 'mutant');
 
