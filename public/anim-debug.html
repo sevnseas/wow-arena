@@ -172,6 +172,14 @@ async function loadChar(charFile) {
     // Fix Mixamo track name prefix
     clip.tracks.forEach(t => { t.name = t.name.replace(/^[^|]+\|/, ''); });
     clip.name = anim.name;
+    // Zero XZ root motion — keep Y bounce
+    clip.tracks.forEach(t => {
+      if (t.name.toLowerCase().includes('hips') && t.name.endsWith('.position')) {
+        for (let i = 0; i < t.values.length; i += 3) {
+          t.values[i] = 0; t.values[i + 2] = 0;
+        }
+      }
+    });
 
     // SkeletonUtils.clone preserves bone bindings so animations actually play
     const root = SkeletonUtils.clone(meshTemplate);

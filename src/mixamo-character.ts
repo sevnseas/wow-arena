@@ -4,6 +4,33 @@ import { CharacterView, LocomotionState } from './character';
 
 type AnimName = 'idle' | 'walk' | 'run' | 'run_stop' | 'turn_left' | 'turn_right';
 
+/**
+ * Strip XZ root translation from a clip so the character stays in place
+ * while the game's physics drives world position. Keeps Y (vertical bounce).
+ *
+ * Mixamo bakes locomotion into the hip bone position track. Each frame the
+ * hips translate forward by (clipLength / frameCount) — visually the mesh
+ * slides forward instead of running in-place. We zero the X and Z values
+ * on that track so only the Y bounce remains.
+ */
+function removeRootMotionXZ(clip: THREE.AnimationClip): void {
+  clip.tracks.forEach(track => {
+    // Match the root/hip bone position track — Mixamo names it "mixamorigHips.position"
+    // but after prefix-stripping it might just be "Hips.position"
+    const isHipPos = track.name.toLowerCase().includes('hips') &&
+                     track.name.endsWith('.position');
+    if (!isHipPos) return;
+
+    const values = (track as THREE.VectorKeyframeTrack).values;
+    // VectorKeyframeTrack for position stores [x,y,z, x,y,z, ...] per keyframe
+    for (let i = 0; i < values.length; i += 3) {
+      values[i]     = 0; // X → zero
+      // values[i+1] = Y — keep (vertical hip bounce)
+      values[i + 2] = 0; // Z → zero
+    }
+  });
+}
+
 // Animation file map
 const ANIM_FILES: Record<AnimName, string> = {
   idle:       'idle.fbx',
@@ -62,6 +89,9 @@ export class MixamoCharacterView implements CharacterView {
       clip.name = name;
       // Strip "ArmatureName|" prefix Mixamo puts on separate-file animations
       clip.tracks.forEach(t => { t.name = t.name.replace(/^[^|]+\|/, ''); });
+      // Remove root motion: zero out XZ translation on the hip/root bone so
+      // the game's movement system owns position — keep Y for vertical bounce.
+      removeRootMotionXZ(clip);
       const action = mixer.clipAction(clip);
       view.clips.set(name, action);
       console.log(`✓ ${name} (${clip.duration.toFixed(2)}s)`);
