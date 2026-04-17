@@ -33,6 +33,9 @@
 <div id="char-sel">
   <button class="btn" id="btn-maria"  onclick="window.loadChar('character')">Maria</button>
   <button class="btn" id="btn-mutant" onclick="window.loadChar('mutant')">Mutant</button>
+  <span style="color:#555;margin:0 4px">|</span>
+  <button class="btn" id="btn-native" onclick="window.toggleCross(false)">Native anims</button>
+  <button class="btn" id="btn-cross"  onclick="window.toggleCross(true)">Cross-rig anims</button>
 </div>
 <div id="info">Drag: orbit · Scroll: zoom · Right-drag: pan · Click label button to focus</div>
 <canvas id="c"></canvas>
@@ -43,8 +46,10 @@ import { FBXLoader }     from 'three/addons/loaders/FBXLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
-// All available animations
-const ANIMS = [
+// Native = exported alongside this character's rig
+// Cross-rig = from a different Mixamo character but works because all
+//             Mixamo rigs share the same mixamorigXxx bone names
+const ANIMS_NATIVE = [
   { name: 'idle',       file: 'idle.fbx' },
   { name: 'walk',       file: 'walk.fbx' },
   { name: 'run',        file: 'run.fbx' },
@@ -56,6 +61,27 @@ const ANIMS = [
   { name: 'walk_left',  file: 'walk_left.fbx' },
   { name: 'walk_right', file: 'walk_right.fbx' },
 ];
+
+const ANIMS_CROSS = [
+  // Cross-rig from other Mixamo characters (work on any Mixamo rig)
+  { name: 'jump (sword rig)',       file: 'jump_sword.fbx' },
+  { name: 'cast_spell (1H)',        file: 'cast_spell.fbx' },
+  { name: 'cast_heal',              file: 'cast_heal.fbx' },
+  // Mutant-native (best on Mutant, still retargets to Maria via shared bone names)
+  { name: 'mutant: idle',           file: 'mutant_idle.fbx' },
+  { name: 'mutant: breathing idle', file: 'mutant_breathing_idle.fbx' },
+  { name: 'mutant: walk',           file: 'mutant_walking.fbx' },
+  { name: 'mutant: run',            file: 'mutant_run.fbx' },
+  { name: 'mutant: jump',           file: 'mutant_jumping.fbx' },
+  { name: 'mutant: swipe',          file: 'mutant_swiping.fbx' },
+  { name: 'mutant: dying',          file: 'mutant_dying.fbx' },
+  { name: 'mutant: flex',           file: 'mutant_flexing_muscles.fbx' },
+  { name: 'mutant: turn L',         file: 'mutant_left_turn_45.fbx' },
+  { name: 'mutant: turn R',         file: 'mutant_right_turn_45.fbx' },
+];
+
+let showCross = false;
+function getAnims() { return showCross ? ANIMS_CROSS : ANIMS_NATIVE; }
 
 const BASE = '/threejs-arena/models';
 
@@ -157,11 +183,12 @@ async function loadChar(charFile) {
   const COLS = 5;
   const SPACING = 3.5;
 
-  const results = await Promise.allSettled(ANIMS.map(a => loadFbx(`${BASE}/${a.file}`)));
+  const anims = getAnims();
+  const results = await Promise.allSettled(anims.map(a => loadFbx(`${BASE}/${a.file}`)));
 
   let placed = 0;
   results.forEach((result, i) => {
-    const anim = ANIMS[i];
+    const anim = anims[i];
     if (result.status === 'rejected') {
       console.warn(`Missing ${anim.file}`);
       return;
@@ -230,6 +257,15 @@ async function loadChar(charFile) {
 }
 
 window.loadChar = loadChar;
+
+window.toggleCross = (cross) => {
+  showCross = cross;
+  document.getElementById('btn-native').classList.toggle('focused', !cross);
+  document.getElementById('btn-cross').classList.toggle('focused', cross);
+  loadChar(currentCharFile);
+};
+// init button state
+document.getElementById('btn-native').classList.add('focused');
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();

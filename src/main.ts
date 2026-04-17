@@ -375,9 +375,9 @@ function tryUseAbility(state: GameState, key: string): void {
   // Execute
   flashSlotPressed(key);
 
-  // Trigger arm animation for instant abilities
+  // Trigger ability animation — pass ability.id so Mixamo view can pick the right clip
   if (ability.castTime === 0) {
-    state.playerView.triggerOneShot('attack');
+    state.playerView.triggerOneShot(ability.id);
   }
 
   ability.execute(ctx);

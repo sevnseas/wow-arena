@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { CharacterView, LocomotionState } from './character';
 
-type AnimName = 'idle' | 'walk' | 'run' | 'run_stop' | 'turn_left' | 'turn_right';
+type AnimName =
+  | 'idle' | 'walk' | 'run' | 'run_stop' | 'turn_left' | 'turn_right'
+  | 'jump' | 'cast_spell' | 'cast_heal';
 
 /**
  * Strip XZ root translation from a clip so the character stays in place
@@ -31,14 +33,32 @@ function removeRootMotionXZ(clip: THREE.AnimationClip): void {
   });
 }
 
-// Animation file map
-const ANIM_FILES: Record<AnimName, string> = {
+// All Mixamo rigs share the same mixamorigXxx bone names, so animations are
+// interchangeable. Each character can have a preferred native set.
+type AnimFiles = Record<AnimName, string>;
+
+const MARIA_ANIMS: AnimFiles = {
   idle:       'idle.fbx',
   walk:       'walk.fbx',
   run:        'run.fbx',
   run_stop:   'run_stop.fbx',
   turn_left:  'turn_left.fbx',
   turn_right: 'turn_right.fbx',
+  jump:       'jump_mutant.fbx',
+  cast_spell: 'cast_spell.fbx',
+  cast_heal:  'cast_heal.fbx',
+};
+
+const MUTANT_ANIMS: AnimFiles = {
+  idle:       'mutant_breathing_idle.fbx',
+  walk:       'mutant_walking.fbx',
+  run:        'mutant_run.fbx',
+  run_stop:   'mutant_run.fbx',   // no dedicated stop — reuse run and let game fade
+  turn_left:  'mutant_left_turn_45.fbx',
+  turn_right: 'mutant_right_turn_45.fbx',
+  jump:       'mutant_jumping.fbx',
+  cast_spell: 'mutant_swiping.fbx',
+  cast_heal:  'mutant_flexing_muscles.fbx',
 };
 
 export class MixamoCharacterView implements CharacterView {
@@ -66,12 +86,15 @@ export class MixamoCharacterView implements CharacterView {
     const loadFbx = (url: string): Promise<THREE.Group> =>
       new Promise((res, rej) => loader.load(url, res, undefined, rej));
 
-    // Load character mesh + all anims in parallel
+    const ANIM_FILES = charFile === 'mutant' ? MUTANT_ANIMS : MARIA_ANIMS;
+
+    // Load character mesh first (must succeed), then all anims in parallel.
+    // allSettled so a missing/broken anim file never kills the whole load.
     const animEntries = Object.entries(ANIM_FILES) as [AnimName, string][];
-    const [mesh, ...animFbxs] = await Promise.all([
-      loadFbx(`${basePath}/${charFile}.fbx`),
-      ...animEntries.map(([, file]) => loadFbx(`${basePath}/${file}`)),
-    ]);
+    const mesh = await loadFbx(`${basePath}/${charFile}.fbx`);
+    const animResults = await Promise.allSettled(
+      animEntries.map(([, file]) => loadFbx(`${basePath}/${file}`))
+    );
 
     // Mixamo FBX is in cm — scale to metres
     mesh.scale.setScalar(0.01);
@@ -82,9 +105,13 @@ export class MixamoCharacterView implements CharacterView {
     const mixer = new THREE.AnimationMixer(mesh);
     const view = new MixamoCharacterView(mesh, mixer);
 
-    animFbxs.forEach((fbx, i) => {
+    animResults.forEach((result, i) => {
       const [name] = animEntries[i];
-      const clip = fbx.animations[0];
+      if (result.status === 'rejected') {
+        console.warn(`⚠ Skipped ${ANIM_FILES[name]}: ${result.reason}`);
+        return;
+      }
+      const clip = result.value.animations[0];
       if (!clip) { console.warn(`No clip in ${ANIM_FILES[name]}`); return; }
       clip.name = name;
       // Strip "ArmatureName|" prefix Mixamo puts on separate-file animations
@@ -114,15 +141,11 @@ export class MixamoCharacterView implements CharacterView {
     const isMoving  = state === 'walk' || state === 'run';
 
     if (state !== this.prevState) {
-      // run → idle: play run_stop first, then idle
-      if (wasMoving && this.prevState === 'run' && state === 'idle') {
-        this.play('run_stop');
-        // After run_stop duration, fall back to idle
-        const stopClip = this.clips.get('run_stop');
-        if (stopClip) {
-          const dur = (stopClip as any)._clip?.duration ?? 0.5;
-          setTimeout(() => { if (this.currentName === 'run_stop') this.play('idle'); }, dur * 1000);
-        }
+      if (state === 'jump') {
+        this.oneShot('jump', 'idle');
+      } else if (wasMoving && this.prevState === 'run' && state === 'idle') {
+        // run → idle: run_stop then idle
+        this.oneShot('run_stop', 'idle');
       } else if (isMoving) {
         this.play(speed01 > 0.55 ? 'run' : 'walk');
       } else {
@@ -130,22 +153,26 @@ export class MixamoCharacterView implements CharacterView {
       }
       this.prevState = state;
     } else if (isMoving) {
-      // Same movement state but speed changed — swap walk ↔ run smoothly
       const want: AnimName = speed01 > 0.55 ? 'run' : 'walk';
       if (want !== this.currentName) this.play(want);
     }
   }
 
   triggerOneShot(name: string) {
-    const action = this.clips.get(name as AnimName);
-    if (!action) return;
-    action.loop = THREE.LoopOnce;
-    action.clampWhenFinished = true;
-    action.reset().play();
+    // Map game ability names → animation names
+    const ANIM_MAP: Record<string, AnimName> = {
+      attack:           'cast_spell',
+      cast_spell:       'cast_spell',
+      cast_heal:        'cast_heal',
+      rogue_shadowstep: 'cast_spell',
+      rogue_blind:      'cast_spell',
+    };
+    const animName = ANIM_MAP[name] ?? (name as AnimName);
+    this.oneShot(animName, this.prevState === 'idle' ? 'idle' : 'run');
   }
 
-  startCasting() { /* keep current anim */ }
-  stopCasting()  { /* keep current anim */ }
+  startCasting() { this.play('cast_spell'); }
+  stopCasting()  { this.play('idle'); }
   setDebuffed(debuffed: boolean) { this.mixer.timeScale = debuffed ? 0.5 : 1; }
 
   update(dt: number) {
@@ -182,18 +209,32 @@ export class MixamoCharacterView implements CharacterView {
 
   // ── Internal ──────────────────────────────────────────────────────────────
 
+  private readonly ONE_SHOTS: ReadonlySet<AnimName> = new Set([
+    'run_stop', 'turn_left', 'turn_right', 'jump', 'cast_spell', 'cast_heal',
+  ]);
+
   private play(name: AnimName) {
     const next = this.clips.get(name);
     if (!next || name === this.currentName) return;
 
     if (this.current) this.current.fadeOut(this.FADE);
 
-    const looping = name !== 'run_stop' && name !== 'turn_left' && name !== 'turn_right';
+    const looping = !this.ONE_SHOTS.has(name);
     next.loop = looping ? THREE.LoopRepeat : THREE.LoopOnce;
     next.clampWhenFinished = !looping;
     next.reset().fadeIn(this.FADE).play();
 
     this.current = next;
     this.currentName = name;
+  }
+
+  // Play a one-shot then return to `returnTo` when finished
+  private oneShot(name: AnimName, returnTo: AnimName) {
+    const clip = this.clips.get(name);
+    if (!clip) { this.play(returnTo); return; }
+
+    this.play(name);
+    const dur = (clip as any)._clip?.duration ?? 1;
+    setTimeout(() => { if (this.currentName === name) this.play(returnTo); }, dur * 1000);
   }
 }
