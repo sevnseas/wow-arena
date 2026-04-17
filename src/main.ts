@@ -21,10 +21,29 @@ import { PlayerController } from './player';
 import { TargetingSystem } from './targeting';
 import { INITIAL_ENTITIES, EntityDef } from './entities';
 import { ProceduralCharacterView, CharacterView, LocomotionState } from './character';
+import { MixamoCharacterView } from './mixamo-character';
 import { CooldownManager, DebuffManager, CastSystem, ProjectileSystem } from './systems';
 import { ClassName, AbilityContext, getClassAbilities, getAbilityByKey } from './abilities';
 import { getModeFromUrl, GameMode } from './mode';
 import { NetworkGame, ConnectionState } from './net';
+
+// ============================================================================
+// Character Factory
+// ============================================================================
+
+async function createCharacterView(useMixamo: boolean, color?: number): Promise<CharacterView> {
+  if (useMixamo) {
+    try {
+      const params = new URL(window.location.href).searchParams;
+      const charFile = params.get('char') || 'character';
+      return await MixamoCharacterView.load('models', charFile);
+    } catch (error) {
+      console.warn('Failed to load Mixamo character, falling back to procedural:', error);
+      return new ProceduralCharacterView(color || 0xffff00);
+    }
+  }
+  return new ProceduralCharacterView(color || 0xffff00);
+}
 
 // ============================================================================
 // Game State
@@ -246,7 +265,7 @@ function updateCCVisuals(state: GameState): void {
   }
 }
 
-function setClass(state: GameState, className: ClassName): void {
+async function setClass(state: GameState, className: ClassName): Promise<void> {
   state.currentClass = className;
   state.cooldowns.resetAll();
   state.casts.interrupt();
@@ -265,7 +284,8 @@ function setClass(state: GameState, className: ClassName): void {
   // Recreate player view with new color
   state.scene.remove(state.playerView.root);
   state.playerView.dispose();
-  state.playerView = new ProceduralCharacterView(colors[className]);
+  const useMixamo = new URL(window.location.href).searchParams.get('mixamo') === '1';
+  state.playerView = await createCharacterView(useMixamo, colors[className]);
   state.playerView.root.position.copy(state.player.position);
   state.scene.add(state.playerView.root);
   state.player.mesh = state.playerView.root;
@@ -442,7 +462,7 @@ function setupInput(state: GameState): void {
 // Initialization
 // ============================================================================
 
-function init(): GameState {
+async function init(): Promise<GameState> {
   // Detect game mode
   const { mode, config } = getModeFromUrl();
   console.log(`[Game] Starting in ${mode} mode`);
@@ -494,7 +514,8 @@ function init(): GameState {
   }
 
   const playerDef = INITIAL_ENTITIES.find(e => e.id === 'player')!;
-  const playerView = new ProceduralCharacterView(playerDef.color);
+  const useMixamo = new URL(window.location.href).searchParams.get('mixamo') === '1';
+  const playerView = await createCharacterView(useMixamo, playerDef.color);
   playerView.root.position.set(...playerDef.position);
   scene.add(playerView.root);
   entities.set('player', playerView.root);
@@ -766,16 +787,19 @@ function animateMultiplayer(state: GameState, delta: number): void {
 // Start
 // ============================================================================
 
-const gameState = init();
-animate(gameState);
-
-console.log('WoW Arena Sandbox - Phase 4');
-console.log('Controls:');
-console.log('  WASD: Move | Space: Jump');
-console.log('  Tab: Class Selection');
-console.log('  1-3: Abilities | Click: Target');
-console.log('');
-console.log('URL params:');
-console.log('  ?mode=standalone  - Local only (default)');
-console.log('  ?mode=multiplayer - Connect to server');
-console.log('  ?server=ws://localhost:8080 - Custom server');
+init().then((gameState) => {
+  animate(gameState);
+  console.log('WoW Arena Sandbox - Phase 4');
+  console.log('Controls:');
+  console.log('  WASD: Move | Space: Jump');
+  console.log('  Tab: Class Selection');
+  console.log('  1-3: Abilities | Click: Target');
+  console.log('');
+  console.log('URL params:');
+  console.log('  ?mode=standalone  - Local only (default)');
+  console.log('  ?mode=multiplayer - Connect to server');
+  console.log('  ?server=ws://localhost:8080 - Custom server');
+  console.log('  ?mixamo=1 - Load Mixamo character (place at public/models/character.glb)');
+}).catch(err => {
+  console.error('Failed to initialize game:', err);
+});

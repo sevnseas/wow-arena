@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Animation Debug</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+    #ui {
+      position: fixed; top: 10px; left: 10px; z-index: 10;
+      display: flex; flex-wrap: wrap; gap: 6px; max-width: 700px;
+    }
+    .btn {
+      padding: 4px 10px; background: #333; border: 1px solid #555;
+      color: #eee; cursor: pointer; border-radius: 3px; font-size: 12px;
+    }
+    .btn:hover { background: #555; }
+    .btn.focused { background: #4a8; border-color: #6cf; }
+    #info { position: fixed; bottom: 10px; left: 10px; font-size: 11px; color: #888; }
+    #char-sel { position: fixed; top: 10px; right: 10px; display: flex; gap: 6px; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="ui"><span style="color:#888">Loading…</span></div>
+<div id="char-sel">
+  <button class="btn" id="btn-maria"  onclick="window.loadChar('character')">Maria</button>
+  <button class="btn" id="btn-mutant" onclick="window.loadChar('mutant')">Mutant</button>
+</div>
+<div id="info">Drag: orbit · Scroll: zoom · Right-drag: pan · Click label button to focus</div>
+<canvas id="c"></canvas>
+
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader }     from 'three/addons/loaders/FBXLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+
+// All available animations
+const ANIMS = [
+  { name: 'idle',       file: 'idle.fbx' },
+  { name: 'walk',       file: 'walk.fbx' },
+  { name: 'run',        file: 'run.fbx' },
+  { name: 'run_stop',   file: 'run_stop.fbx' },
+  { name: 'turn_left',  file: 'turn_left.fbx' },
+  { name: 'turn_right', file: 'turn_right.fbx' },
+  { name: 'walk_back',  file: 'walk_back.fbx' },
+  { name: 'run_back',   file: 'run_back.fbx' },
+  { name: 'walk_left',  file: 'walk_left.fbx' },
+  { name: 'walk_right', file: 'walk_right.fbx' },
+];
+
+const BASE = '/threejs-arena/models';
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+scene.fog = new THREE.Fog(0x1a1a2e, 60, 140);
+
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const sun = new THREE.DirectionalLight(0xffffee, 1.2);
+sun.position.set(8, 14, 8);
+sun.castShadow = true;
+sun.shadow.mapSize.setScalar(2048);
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0x87ceeb, 0x2a4a2a, 0.4));
+
+// Ground
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(120, 120),
+  new THREE.MeshStandardMaterial({ color: 0x1a2a1a, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+scene.add(new THREE.GridHelper(120, 60, 0x223322, 0x1a2a1a));
+
+// Forward arrow (+Z = "camera facing" direction)
+scene.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0.02,0), 3, 0x00ffff, 0.4, 0.25));
+
+// Camera + orbit
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(0, 4, 16);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.update();
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let instances = [];
+
+function clearScene() {
+  instances.forEach(({root, labelAnchor}) => {
+    scene.remove(root);
+    if (labelAnchor) scene.remove(labelAnchor);
+  });
+  instances = [];
+}
+
+function makeLabel(text) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 56;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.roundRect(4, 4, 248, 48, 8);
+  ctx.fill();
+  ctx.fillStyle = '#ffe';
+  ctx.font = 'bold 22px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, 128, 34);
+  const tex = new THREE.CanvasTexture(c);
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.8, 0.4),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
+  );
+  mesh.userData.isLabel = true;
+  return mesh;
+}
+
+async function loadChar(charFile) {
+  clearScene();
+  document.getElementById('ui').innerHTML = '<span style="color:#aaa">Loading character…</span>';
+  document.getElementById('btn-maria').classList.toggle('focused',  charFile === 'character');
+  document.getElementById('btn-mutant').classList.toggle('focused', charFile === 'mutant');
+
+  const loader = new FBXLoader();
+  const loadFbx = url => new Promise((res, rej) => loader.load(url, res, undefined, rej));
+
+  let meshTemplate;
+  try {
+    meshTemplate = await loadFbx(`${BASE}/${charFile}.fbx`);
+    // Don't scale the template — scale is applied per-clone
+  } catch(e) {
+    document.getElementById('ui').innerHTML = `<span style="color:#f66">Failed: ${charFile}.fbx — ${e.message}</span>`;
+    return;
+  }
+
+  const uiEl = document.getElementById('ui');
+  uiEl.innerHTML = '';
+
+  const COLS = 5;
+  const SPACING = 3.5;
+
+  const results = await Promise.allSettled(ANIMS.map(a => loadFbx(`${BASE}/${a.file}`)));
+
+  let placed = 0;
+  results.forEach((result, i) => {
+    const anim = ANIMS[i];
+    if (result.status === 'rejected') {
+      console.warn(`Missing ${anim.file}`);
+      return;
+    }
+    const clip = result.value.animations[0];
+    if (!clip) return;
+
+    // Fix Mixamo track name prefix
+    clip.tracks.forEach(t => { t.name = t.name.replace(/^[^|]+\|/, ''); });
+    clip.name = anim.name;
+
+    // SkeletonUtils.clone preserves bone bindings so animations actually play
+    const root = SkeletonUtils.clone(meshTemplate);
+    root.scale.setScalar(0.01);
+    const col = placed % COLS;
+    const row = Math.floor(placed / COLS);
+    root.position.set((col - (COLS-1)/2) * SPACING, 0, row * -SPACING * 1.2);
+    root.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    scene.add(root);
+
+    const mixer = new THREE.AnimationMixer(root);
+    const action = mixer.clipAction(clip);
+    action.play();
+
+    // Floating label — position in world units (after scale), so ~2.4 units above feet
+    const label = makeLabel(anim.name);
+    label.position.set(0, 2.4, 0);
+    // Label must be a direct child of scene to stay in world scale
+    const labelAnchor = new THREE.Object3D();
+    labelAnchor.position.copy(root.position).setY(2.6);
+    labelAnchor.userData.isLabel = true;
+    labelAnchor.add(label);
+    scene.add(labelAnchor);
+
+    instances.push({ root, mixer, name: anim.name, labelAnchor });
+
+    // UI focus button
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = anim.name;
+    const pos = root.position.clone();
+    btn.onclick = () => {
+      controls.target.set(pos.x, 1, pos.z);
+      camera.position.set(pos.x, 3, pos.z + 5);
+      controls.update();
+    };
+    uiEl.appendChild(btn);
+
+    placed++;
+  });
+
+  // Frame all
+  const rows = Math.ceil(placed / COLS);
+  const midZ = -(rows - 1) * SPACING * 1.2 / 2;
+  controls.target.set(0, 1, midZ);
+  camera.position.set(0, 6, midZ + 18);
+  controls.update();
+}
+
+window.loadChar = loadChar;
+
+// ── Loop ──────────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  instances.forEach(({ mixer, labelAnchor }) => {
+    mixer.update(dt);
+    if (labelAnchor) labelAnchor.lookAt(camera.position);
+  });
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+loadChar('character');
+</script>
+</body>
+</html>
