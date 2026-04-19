@@ -28,7 +28,7 @@ export class PlayerController {
   public mesh: THREE.Object3D | null = null;
 
   private config: PlayerConfig;
-  private isGrounded: boolean = true;
+  public isGrounded: boolean = true;
   private groundLevel: number = 0; // Current ground height (can be on box)
   private colliders: Collider[] = [];
 

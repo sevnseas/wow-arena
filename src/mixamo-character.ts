@@ -182,7 +182,7 @@ export class MixamoCharacterView implements CharacterView {
   }
 
   startCasting() { this.play('cast_spell'); }
-  stopCasting()  { this.play('idle'); }
+  stopCasting()  { this.play(this.prevState); }
   setDebuffed(debuffed: boolean) { this.mixer.timeScale = debuffed ? 0.5 : 1; }
 
   update(dt: number) {

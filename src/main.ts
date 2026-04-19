@@ -653,7 +653,7 @@ function animateStandalone(state: GameState, delta: number): void {
   // Update player character view
   const vel = state.player.velocity;
   const speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
-  const isGrounded = state.player.position.y <= 0.01;
+  const isGrounded = state.player.isGrounded;
 
   let locoState: LocomotionState = 'idle';
   if (!isGrounded) {
