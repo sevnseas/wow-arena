@@ -1,198 +1,181 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
-export type ShaderStyle = 'default' | 'cel' | 'wow';
+export type ShaderStyle = 'default' | 'wow';
 
-// ── Cel-shade pass ────────────────────────────────────────────────────────────
-// Quantises luminance into hard bands and draws black Sobel outlines.
-const CelShader = {
-  uniforms: {
-    tDiffuse:   { value: null as THREE.Texture | null },
-    resolution: { value: new THREE.Vector2(1, 1) },
-    bands:      { value: 4.0 },
-    outlineStr: { value: 0.6 },
-  },
-  vertexShader: /* glsl */`
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
-  `,
-  fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse;
-    uniform vec2 resolution;
-    uniform float bands;
-    uniform float outlineStr;
-    varying vec2 vUv;
+// ── Gradient maps ─────────────────────────────────────────────────────────────
 
-    float luma(vec3 c) { return dot(c, vec3(0.299,0.587,0.114)); }
+function makeGradientMap(steps: number[]): THREE.DataTexture {
+  // steps: luminance values 0-255 for each band
+  const data = new Uint8Array(steps.length * 4);
+  steps.forEach((v, i) => { data[i*4]=v; data[i*4+1]=v; data[i*4+2]=v; data[i*4+3]=255; });
+  const tex = new THREE.DataTexture(data, steps.length, 1, THREE.RGBAFormat);
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
 
-    void main() {
-      vec2 px = 1.0 / resolution;
-      vec4 col = texture2D(tDiffuse, vUv);
+// 3-step WoW-ish gradient: shadow / midtone / highlight
+const wowGradient = makeGradientMap([40, 140, 255]);
 
-      // Hard colour bands on luma
-      float l = luma(col.rgb);
-      float banded = floor(l * bands) / bands;
-      col.rgb *= banded / max(l, 0.001);
+// ── Inverted hull outline ─────────────────────────────────────────────────────
 
-      // Sobel on luma for outlines
-      float tl = luma(texture2D(tDiffuse, vUv + vec2(-px.x,  px.y)).rgb);
-      float tm = luma(texture2D(tDiffuse, vUv + vec2(    0,  px.y)).rgb);
-      float tr = luma(texture2D(tDiffuse, vUv + vec2( px.x,  px.y)).rgb);
-      float ml = luma(texture2D(tDiffuse, vUv + vec2(-px.x,     0)).rgb);
-      float mr = luma(texture2D(tDiffuse, vUv + vec2( px.x,     0)).rgb);
-      float bl = luma(texture2D(tDiffuse, vUv + vec2(-px.x, -px.y)).rgb);
-      float bm = luma(texture2D(tDiffuse, vUv + vec2(     0,-px.y)).rgb);
-      float br = luma(texture2D(tDiffuse, vUv + vec2( px.x, -px.y)).rgb);
+const OUTLINE_TAG = '__wow_outline__';
 
-      float gx = -tl - 2.0*ml - bl + tr + 2.0*mr + br;
-      float gy = -tl - 2.0*tm - tr + bl + 2.0*bm + br;
-      float edge = clamp(sqrt(gx*gx + gy*gy) * outlineStr * 8.0, 0.0, 1.0);
+function addHullOutline(mesh: THREE.Mesh, color = 0x1a0f2e, thickness = 0.03): void {
+  if ((mesh as any)[OUTLINE_TAG]) return;
+  const outlineMat = new THREE.MeshBasicMaterial({
+    color,
+    side: THREE.BackSide,
+    depthWrite: false,
+  });
+  const outline = new THREE.Mesh(mesh.geometry, outlineMat);
+  outline.scale.setScalar(1 + thickness);
+  outline.name = OUTLINE_TAG;
+  mesh.add(outline);
+  (mesh as any)[OUTLINE_TAG] = outline;
+}
 
-      col.rgb = mix(col.rgb, vec3(0.0), edge);
-      gl_FragColor = col;
+function removeHullOutline(mesh: THREE.Mesh): void {
+  const outline = (mesh as any)[OUTLINE_TAG] as THREE.Mesh | undefined;
+  if (!outline) return;
+  mesh.remove(outline);
+  outline.material instanceof THREE.Material && outline.material.dispose();
+  delete (mesh as any)[OUTLINE_TAG];
+}
+
+// ── Material conversion ───────────────────────────────────────────────────────
+
+const ORIGINAL_MAT_TAG = '__orig_mat__';
+
+function toToon(src: THREE.MeshStandardMaterial | THREE.MeshBasicMaterial): THREE.MeshToonMaterial {
+  const color = (src as any).color ?? new THREE.Color(0x888888);
+  const map   = (src as any).map   ?? null;
+  return new THREE.MeshToonMaterial({ color, map, gradientMap: wowGradient });
+}
+
+function applyWow(scene: THREE.Scene): void {
+  scene.traverse(obj => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    const mat = obj.material;
+    if (!mat || (obj as any)[ORIGINAL_MAT_TAG]) return; // skip already converted
+
+    const mats = Array.isArray(mat) ? mat : [mat];
+    const toons = mats.map(m => {
+      if (m instanceof THREE.MeshStandardMaterial || m instanceof THREE.MeshBasicMaterial) {
+        return toToon(m as any);
+      }
+      return m; // keep as-is (MeshToonMaterial already, etc.)
+    });
+
+    (obj as any)[ORIGINAL_MAT_TAG] = mat;
+    obj.material = Array.isArray(mat) ? toons : toons[0];
+
+    // Outline on solid geometry (skip ground plane — too flat)
+    if (obj.name !== 'Ground') {
+      addHullOutline(obj);
     }
-  `,
-};
+  });
+}
 
-// ── WoW-style pass ────────────────────────────────────────────────────────────
-// Softer 3-band toon shading, warm saturation boost, and coloured outlines.
-const WowShader = {
-  uniforms: {
-    tDiffuse:   { value: null as THREE.Texture | null },
-    resolution: { value: new THREE.Vector2(1, 1) },
-  },
-  vertexShader: /* glsl */`
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
-  `,
-  fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse;
-    uniform vec2 resolution;
-    varying vec2 vUv;
+function revertWow(scene: THREE.Scene): void {
+  scene.traverse(obj => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    const orig = (obj as any)[ORIGINAL_MAT_TAG];
+    if (!orig) return;
 
-    float luma(vec3 c) { return dot(c, vec3(0.299,0.587,0.114)); }
+    // Dispose toon material
+    const cur = Array.isArray(obj.material) ? obj.material : [obj.material];
+    cur.forEach(m => m.dispose());
 
-    vec3 toon3(vec3 c) {
-      float l = luma(c);
-      float t = l < 0.28 ? 0.15
-              : l < 0.62 ? 0.55
-              :             0.95;
-      return c * (t / max(l, 0.001));
-    }
+    obj.material = orig;
+    delete (obj as any)[ORIGINAL_MAT_TAG];
+    removeHullOutline(obj);
+  });
+}
 
-    // Warm-shift and saturate like WoW's older renderer
-    vec3 wowColour(vec3 c) {
-      // Slight warm tint
-      c *= vec3(1.08, 1.02, 0.92);
-      // Saturation boost
-      float g = luma(c);
-      c = mix(vec3(g), c, 1.35);
-      return clamp(c, 0.0, 1.0);
-    }
+// ── Fog ───────────────────────────────────────────────────────────────────────
 
-    void main() {
-      vec2 px = 1.0 / resolution;
-      vec4 col = texture2D(tDiffuse, vUv);
+type FogState = { fog: THREE.FogBase | null };
 
-      col.rgb = toon3(col.rgb);
-      col.rgb = wowColour(col.rgb);
+function applyWowFog(scene: THREE.Scene, state: FogState): void {
+  state.fog = scene.fog;
+  // Deep purple/blue like Nagrand or Blade's Edge at dusk
+  scene.fog = new THREE.FogExp2(0x1a0f2e, 0.018);
+  scene.background = new THREE.Color(0x1a0f2e);
+}
 
-      // Coloured outline: dark purple/blue like WoW's stylised look
-      float tl = luma(texture2D(tDiffuse, vUv + vec2(-px.x,  px.y)).rgb);
-      float tm = luma(texture2D(tDiffuse, vUv + vec2(    0,  px.y)).rgb);
-      float tr = luma(texture2D(tDiffuse, vUv + vec2( px.x,  px.y)).rgb);
-      float ml = luma(texture2D(tDiffuse, vUv + vec2(-px.x,     0)).rgb);
-      float mr = luma(texture2D(tDiffuse, vUv + vec2( px.x,     0)).rgb);
-      float bl = luma(texture2D(tDiffuse, vUv + vec2(-px.x, -px.y)).rgb);
-      float bm = luma(texture2D(tDiffuse, vUv + vec2(     0,-px.y)).rgb);
-      float br = luma(texture2D(tDiffuse, vUv + vec2( px.x, -px.y)).rgb);
+function revertFog(scene: THREE.Scene, state: FogState): void {
+  scene.fog = state.fog;
+  scene.background = new THREE.Color(0x1a1a2e);
+}
 
-      float gx = -tl - 2.0*ml - bl + tr + 2.0*mr + br;
-      float gy = -tl - 2.0*tm - tr + bl + 2.0*bm + br;
-      float edge = clamp(sqrt(gx*gx + gy*gy) * 6.0, 0.0, 1.0);
+// ── Public manager ────────────────────────────────────────────────────────────
 
-      vec3 outlineCol = vec3(0.08, 0.04, 0.18); // deep indigo
-      col.rgb = mix(col.rgb, outlineCol, edge * 0.85);
-
-      gl_FragColor = col;
-    }
-  `,
-};
-
-// ── ShaderStyleManager ────────────────────────────────────────────────────────
 export class ShaderStyleManager {
-  private composer: EffectComposer;
-  private renderPass: RenderPass;
-  private celPass: ShaderPass;
-  private wowPass: ShaderPass;
-  private currentStyle: ShaderStyle = 'default';
+  private current: ShaderStyle = 'default';
+  private fogState: FogState = { fog: null };
 
   constructor(
-    renderer: THREE.WebGLRenderer,
-    scene: THREE.Scene,
-    camera: THREE.Camera,
-  ) {
-    this.composer = new EffectComposer(renderer);
-    this.renderPass = new RenderPass(scene, camera);
-    this.composer.addPass(this.renderPass);
+    private renderer: THREE.WebGLRenderer,
+    private scene: THREE.Scene,
+  ) {}
 
-    this.celPass = new ShaderPass(CelShader);
-    this.celPass.enabled = false;
-    this.composer.addPass(this.celPass);
+  setStyle(style: ShaderStyle): void {
+    if (style === this.current) return;
 
-    this.wowPass = new ShaderPass(WowShader);
-    this.wowPass.enabled = false;
-    this.composer.addPass(this.wowPass);
+    // Revert old
+    if (this.current === 'wow') {
+      revertWow(this.scene);
+      revertFog(this.scene, this.fogState);
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    }
+
+    // Apply new
+    if (style === 'wow') {
+      applyWow(this.scene);
+      applyWowFog(this.scene, this.fogState);
+      // Flat tone mapping keeps toon colours punchy (no film-grain crush)
+      this.renderer.toneMapping = THREE.NoToneMapping;
+    }
+
+    this.current = style;
   }
 
-  setStyle(style: ShaderStyle) {
-    this.currentStyle = style;
-    this.celPass.enabled = style === 'cel';
-    this.wowPass.enabled = style === 'wow';
-  }
+  getStyle(): ShaderStyle { return this.current; }
 
-  setSize(w: number, h: number) {
-    this.composer.setSize(w, h);
-    const res = new THREE.Vector2(w, h);
-    (this.celPass.uniforms as any).resolution.value = res;
-    (this.wowPass.uniforms as any).resolution.value = res;
-  }
-
-  render() {
-    this.composer.render();
-  }
-
-  getStyle(): ShaderStyle { return this.currentStyle; }
+  // No-op — kept so main.ts call signature stays compatible
+  setSize(_w: number, _h: number): void {}
+  render(): void {} // main.ts still calls renderer.render directly
 }
 
 // ── Dropdown UI ───────────────────────────────────────────────────────────────
+
 export function createShaderDropdown(manager: ShaderStyleManager): void {
   const wrap = document.createElement('div');
   wrap.style.cssText = `
-    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-    z-index: 200; display: flex; align-items: center; gap: 8px;
-    background: rgba(0,0,0,0.75); border: 1px solid #555;
-    border-radius: 8px; padding: 6px 14px; font-family: 'Segoe UI', Arial, sans-serif;
+    position:fixed; top:16px; left:50%; transform:translateX(-50%);
+    z-index:200; display:flex; align-items:center; gap:8px;
+    background:rgba(0,0,0,0.72); border:1px solid #444;
+    border-radius:8px; padding:5px 14px;
+    font-family:'Segoe UI',Arial,sans-serif; pointer-events:all;
   `;
 
   const label = document.createElement('span');
   label.textContent = 'Style:';
-  label.style.cssText = 'color:#aaa; font-size:12px;';
+  label.style.cssText = 'color:#aaa;font-size:12px;user-select:none;';
 
   const select = document.createElement('select');
   select.style.cssText = `
-    background: #222; color: #fff; border: 1px solid #555;
-    border-radius: 4px; padding: 2px 6px; font-size: 13px; cursor: pointer;
+    background:#1a1a2e; color:#e8d89a; border:1px solid #555;
+    border-radius:4px; padding:2px 8px; font-size:13px; cursor:pointer;
+    font-family:inherit;
   `;
 
   const options: { value: ShaderStyle; label: string }[] = [
     { value: 'default', label: 'Default (PBR)' },
-    { value: 'cel',     label: 'Cel Shade' },
     { value: 'wow',     label: 'World of Warcraft' },
   ];
-
   for (const opt of options) {
     const el = document.createElement('option');
     el.value = opt.value;
@@ -200,9 +183,8 @@ export function createShaderDropdown(manager: ShaderStyleManager): void {
     select.appendChild(el);
   }
 
-  select.addEventListener('change', () => {
-    manager.setStyle(select.value as ShaderStyle);
-  });
+  select.value = manager.getStyle();
+  select.addEventListener('change', () => manager.setStyle(select.value as ShaderStyle));
 
   wrap.appendChild(label);
   wrap.appendChild(select);

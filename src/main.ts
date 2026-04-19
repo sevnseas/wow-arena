@@ -614,12 +614,11 @@ async function init(): Promise<GameState> {
     ccCubes: new Map(),
     mode,
     network,
-    shaderManager: new ShaderStyleManager(renderer, scene, cameraRig.camera),
+    shaderManager: new ShaderStyleManager(renderer, scene),
   };
 
   createShaderDropdown(state.shaderManager);
   shaderManagerRef = state.shaderManager;
-  state.shaderManager.setSize(window.innerWidth, window.innerHeight);
 
   setupInput(state);
   updateActionBar(state);
@@ -645,7 +644,7 @@ function animate(state: GameState): void {
   }
 
   // Render
-  state.shaderManager.render();
+  state.renderer.render(state.scene, state.cameraRig.camera);
 }
 
 function animateStandalone(state: GameState, delta: number): void {
