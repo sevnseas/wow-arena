@@ -57,6 +57,8 @@ function toToon(src: THREE.MeshStandardMaterial | THREE.MeshBasicMaterial): THRE
 function applyWow(scene: THREE.Scene): void {
   scene.traverse(obj => {
     if (!(obj instanceof THREE.Mesh)) return;
+    // Skip outline shells we added — traverse visits children too
+    if (obj.name === OUTLINE_TAG) return;
     const mat = obj.material;
     if (!mat || (obj as any)[ORIGINAL_MAT_TAG]) return; // skip already converted
 
@@ -81,6 +83,7 @@ function applyWow(scene: THREE.Scene): void {
 function revertWow(scene: THREE.Scene): void {
   scene.traverse(obj => {
     if (!(obj instanceof THREE.Mesh)) return;
+    if (obj.name === OUTLINE_TAG) return;
     const orig = (obj as any)[ORIGINAL_MAT_TAG];
     if (!orig) return;
 
