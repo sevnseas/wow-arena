@@ -14,6 +14,7 @@
  */
 
 import * as THREE from 'three';
+import { ShaderStyleManager, createShaderDropdown } from './shader-styles';
 import { createAxisGizmo, dirToYaw } from './coords';
 import { createArena, createArenaLighting, getColliders } from './arena';
 import { CameraRig } from './camera';
@@ -74,6 +75,8 @@ interface GameState {
   // Phase 4: Network state
   mode: GameMode;
   network: NetworkGame | null;
+
+  shaderManager: ShaderStyleManager;
 }
 
 // ============================================================================
@@ -546,9 +549,12 @@ async function init(): Promise<GameState> {
 
   const debugElement = document.getElementById('debug-info');
 
+  let shaderManagerRef: ShaderStyleManager | null = null;
   window.addEventListener('resize', () => {
-    cameraRig.resize(window.innerWidth, window.innerHeight);
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    const w = window.innerWidth, h = window.innerHeight;
+    cameraRig.resize(w, h);
+    renderer.setSize(w, h);
+    shaderManagerRef?.setSize(w, h);
   });
 
   const clock = new THREE.Clock();
@@ -607,8 +613,13 @@ async function init(): Promise<GameState> {
     classSelectOpen: false,
     ccCubes: new Map(),
     mode,
-    network
+    network,
+    shaderManager: new ShaderStyleManager(renderer, scene, cameraRig.camera),
   };
+
+  createShaderDropdown(state.shaderManager);
+  shaderManagerRef = state.shaderManager;
+  state.shaderManager.setSize(window.innerWidth, window.innerHeight);
 
   setupInput(state);
   updateActionBar(state);
@@ -634,7 +645,7 @@ function animate(state: GameState): void {
   }
 
   // Render
-  state.renderer.render(state.scene, state.cameraRig.camera);
+  state.shaderManager.render();
 }
 
 function animateStandalone(state: GameState, delta: number): void {
