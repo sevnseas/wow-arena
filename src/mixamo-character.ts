@@ -159,6 +159,8 @@ export class MixamoCharacterView implements CharacterView {
     if (state !== this.prevState) {
       if (state === 'jump') {
         this.oneShot('jump', this.groundState as AnimName);
+      } else if (state === 'fall') {
+        // Don't change animation while falling - wait for landing
       } else if (wasMoving && this.prevState === 'run' && state === 'idle') {
         // run → idle: run_stop then idle
         this.oneShot('run_stop', 'idle');
