@@ -28,6 +28,10 @@ export class PlayerController {
   public position: THREE.Vector3;
   public velocity: THREE.Vector3;
   public mesh: THREE.Object3D | null = null;
+  // The direction the character is facing, in the same yaw convention as
+  // CameraRig.yaw (yawToDir(0) = -Z forward, increases CCW). RMB drag
+  // updates this; WASD movement is transformed by it (strafe semantics).
+  public facingYaw: number = 0;
 
   private config: PlayerConfig;
   public isGrounded: boolean = true;
@@ -132,30 +136,33 @@ export class PlayerController {
   /**
    * Update player physics and position
    * @param deltaTime Time since last frame in seconds
-   * @param cameraYaw Current camera yaw for movement direction
+   * @param mouseForward When true (both mouse buttons held), add a virtual
+   *                     forward press on top of any keyboard input.
    */
-  update(deltaTime: number, cameraYaw: number): void {
-    // Get input in local space
+  update(deltaTime: number, mouseForward: boolean = false): void {
+    // Get input in local space (W=-Z forward, A=-X left, etc.)
     const input = this.getInputDirection();
+    if (mouseForward) {
+      input.z -= 1;
+      if (input.lengthSq() > 0) input.normalize();
+    }
 
     if (input.lengthSq() > 0) {
-      // Transform input direction by camera yaw
-      // Forward (-Z in local) should be camera forward direction
-      const forward = yawToDir(cameraYaw);
+      // Transform input by the character's facing yaw — WoW-style strafe
+      // semantics: A/D move sideways relative to where the character is
+      // facing, never rotate the character.
+      const forward = yawToDir(this.facingYaw);
       const right = new THREE.Vector3(-forward.z, 0, forward.x);
 
-      // Calculate world-space movement direction
       const moveDir = new THREE.Vector3()
         .addScaledVector(right, input.x)
-        .addScaledVector(forward, -input.z); // Negate because input.z < 0 means forward
+        .addScaledVector(forward, -input.z); // input.z < 0 means forward
 
       moveDir.normalize();
 
-      // Apply horizontal movement
       this.velocity.x = moveDir.x * this.config.moveSpeed;
       this.velocity.z = moveDir.z * this.config.moveSpeed;
     } else {
-      // No input - stop horizontal movement
       this.velocity.x = 0;
       this.velocity.z = 0;
     }

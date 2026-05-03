@@ -14,7 +14,7 @@
  */
 
 import * as THREE from 'three';
-import { createAxisGizmo, dirToYaw } from './coords';
+import { createAxisGizmo } from './coords';
 import { createArena, getColliders, getTerrainHeightData } from './arena';
 import { CameraRig } from './camera';
 import { PlayerController } from './player';
@@ -362,7 +362,7 @@ function tryUseAbility(state: GameState, key: string): void {
   const ctx: AbilityContext = {
     casterId: 'player',
     casterPos: state.player.position.clone(),
-    casterYaw: state.cameraRig.yaw,
+    casterYaw: state.player.facingYaw,
     targetId: target?.id || null,
     targetPos: target ? target.mesh.position.clone() : null,
     cooldowns: state.cooldowns,
@@ -716,8 +716,10 @@ function animateStandalone(state: GameState, delta: number): void {
     }
   }
 
-  // Update player
-  state.player.update(delta, state.cameraRig.yaw);
+  // RMB drag rotates the character; LMB-only orbits the camera independently.
+  state.player.facingYaw += state.cameraRig.consumePlayerYawDelta();
+  // Both buttons held = walk forward (WoW mouse-walk).
+  state.player.update(delta, state.cameraRig.bothHeld);
 
   // Update player character view
   const vel = state.player.velocity;
@@ -742,10 +744,10 @@ function animateStandalone(state: GameState, delta: number): void {
   state.playerView.setLocomotion(locoState, speed / 6);
   if (showAir) state.playerView.setAirborne?.(vel.y, JUMP_FORCE);
 
-  if (speed > 0.1) {
-    const moveYaw = dirToYaw(new THREE.Vector3(vel.x, 0, vel.z));
-    state.playerView.setFacingYaw(-moveYaw);
-  }
+  // Character always faces its own yaw, never the movement direction.
+  // Negation aligns the player's CCW yaw with the existing setFacingYaw
+  // convention (which itself negates and adds π for the Mixamo rig).
+  state.playerView.setFacingYaw(-state.player.facingYaw);
 
   state.playerView.update(delta);
 
@@ -804,6 +806,9 @@ function animateMultiplayer(state: GameState, delta: number): void {
     state.playerView.setLocomotion(locoState, speed / 6);
     if (showAir) state.playerView.setAirborne?.(localState.vel.y, JUMP_FORCE);
 
+    // Multiplayer path: server doesn't ship facing yaw, infer from velocity
+    // for now. (Local prediction's facing should be authoritative — wire
+    // through state.player.facingYaw when the protocol carries it.)
     if (speed > 0.1) {
       const moveYaw = Math.atan2(localState.vel.x, localState.vel.z);
       state.playerView.setFacingYaw(-moveYaw);

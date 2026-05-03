@@ -37,9 +37,14 @@ export class CameraRig {
   private currentPitch: number = 0.3;
   private targetDistance: number;
 
-  private isDragging: boolean = false;
+  private leftDown: boolean = false;
+  private rightDown: boolean = false;
   private lastMouseX: number = 0;
   private lastMouseY: number = 0;
+  // Yaw delta accumulated from RMB drag since last consume. main.ts pulls
+  // this each frame and applies it to the player's facing yaw so camera
+  // and character stay aligned in WoW-style "right click to turn".
+  private pendingPlayerYawDelta: number = 0;
 
   constructor(config: Partial<CameraConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -92,28 +97,33 @@ export class CameraRig {
   }
 
   private onMouseDown(e: MouseEvent): void {
-    // Left or right click to orbit
+    if (e.button === 0) this.leftDown = true;
+    if (e.button === 2) this.rightDown = true;
     if (e.button === 0 || e.button === 2) {
-      this.isDragging = true;
       this.lastMouseX = e.clientX;
       this.lastMouseY = e.clientY;
     }
   }
 
   private onMouseUp(e: MouseEvent): void {
-    if (e.button === 0 || e.button === 2) {
-      this.isDragging = false;
-    }
+    if (e.button === 0) this.leftDown = false;
+    if (e.button === 2) this.rightDown = false;
   }
 
   private onMouseMove(e: MouseEvent): void {
-    if (!this.isDragging) return;
+    if (!this.leftDown && !this.rightDown) return;
 
     const deltaX = e.clientX - this.lastMouseX;
     const deltaY = e.clientY - this.lastMouseY;
 
-    this.targetYaw -= deltaX * this.config.sensitivity;
+    const yawDelta = -deltaX * this.config.sensitivity;
+    this.targetYaw += yawDelta;
     this.targetPitch += deltaY * this.config.sensitivity;
+
+    // RMB also rotates the player so the camera stays behind the character.
+    // (LMB-only drag orbits the camera while the character keeps facing
+    // wherever it was — classic WoW behavior.)
+    if (this.rightDown) this.pendingPlayerYawDelta += yawDelta;
 
     // Clamp pitch
     this.targetPitch = Math.max(
@@ -148,7 +158,31 @@ export class CameraRig {
    * Check if camera is being dragged (to prevent targeting on orbit)
    */
   get dragging(): boolean {
-    return this.isDragging;
+    return this.leftDown || this.rightDown;
+  }
+
+  /** Both buttons held → "mouse-walk" forward (WoW convention). */
+  get bothHeld(): boolean {
+    return this.leftDown && this.rightDown;
+  }
+
+  /**
+   * Pull (and clear) the yaw delta accumulated from RMB dragging since the
+   * last call. The caller adds this to the player's facing yaw.
+   */
+  consumePlayerYawDelta(): number {
+    const v = this.pendingPlayerYawDelta;
+    this.pendingPlayerYawDelta = 0;
+    return v;
+  }
+
+  /**
+   * Force the camera yaw to follow the given player yaw exactly. Used
+   * after the player turns externally (e.g. snap-to-target) so the
+   * camera doesn't lag behind.
+   */
+  setYaw(yaw: number): void {
+    this.targetYaw = yaw;
   }
 
   /**
