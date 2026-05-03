@@ -190,7 +190,13 @@ export class MixamoCharacterView implements CharacterView {
   }
 
   startCasting() { this.play('cast_spell'); }
-  stopCasting()  { this.play(this.groundState as AnimName); }
+  stopCasting() {
+    // Don't interrupt one-shot animations (jump, cast, etc)
+    if (this.currentName && this.ONE_SHOTS.has(this.currentName as AnimName)) {
+      return;
+    }
+    this.play(this.groundState as AnimName);
+  }
   setDebuffed(debuffed: boolean) { this.mixer.timeScale = debuffed ? 0.5 : 1; }
 
   update(dt: number) {
@@ -249,7 +255,10 @@ export class MixamoCharacterView implements CharacterView {
   // Play a one-shot then return to `returnTo` when finished
   private oneShot(name: AnimName, returnTo: AnimName) {
     const clip = this.clips.get(name);
-    if (!clip) { this.play(returnTo); return; }
+    if (!clip) {
+      this.play(returnTo);
+      return;
+    }
 
     this.play(name);
     const dur = (clip as any)._clip?.duration ?? 1;
