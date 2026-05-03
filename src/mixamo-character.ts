@@ -248,6 +248,9 @@ export class MixamoCharacterView implements CharacterView {
     next.clampWhenFinished = !looping;
     next.reset().fadeIn(this.FADE).play();
 
+    // Speed up jump animation so it matches physics
+    next.timeScale = name === 'jump' ? 10 : 1;
+
     this.current = next;
     this.currentName = name;
   }
