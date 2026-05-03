@@ -79,6 +79,7 @@ export class MixamoCharacterView implements CharacterView {
   private readonly FADE = 0.2;
 
   private prevState: LocomotionState = 'idle';
+  private groundState: LocomotionState = 'idle'; // Last grounded state (walk/run/idle) for jump/fall recovery
   private targetYaw = 0;
   private currentYaw = 0;
   private prevYaw = 0;
@@ -150,9 +151,14 @@ export class MixamoCharacterView implements CharacterView {
     const wasMoving = this.prevState === 'walk' || this.prevState === 'run';
     const isMoving  = state === 'walk' || state === 'run';
 
+    // Track the last grounded state for jump/fall recovery
+    if (state === 'walk' || state === 'run' || state === 'idle') {
+      this.groundState = state;
+    }
+
     if (state !== this.prevState) {
       if (state === 'jump') {
-        this.oneShot('jump', 'idle');
+        this.oneShot('jump', this.groundState as AnimName);
       } else if (wasMoving && this.prevState === 'run' && state === 'idle') {
         // run → idle: run_stop then idle
         this.oneShot('run_stop', 'idle');
@@ -178,11 +184,11 @@ export class MixamoCharacterView implements CharacterView {
       rogue_blind:      'cast_spell',
     };
     const animName = ANIM_MAP[name] ?? (name as AnimName);
-    this.oneShot(animName, this.prevState === 'idle' ? 'idle' : 'run');
+    this.oneShot(animName, this.groundState as AnimName);
   }
 
   startCasting() { this.play('cast_spell'); }
-  stopCasting()  { this.play(this.prevState); }
+  stopCasting()  { this.play(this.groundState as AnimName); }
   setDebuffed(debuffed: boolean) { this.mixer.timeScale = debuffed ? 0.5 : 1; }
 
   update(dt: number) {
