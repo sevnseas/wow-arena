@@ -250,7 +250,7 @@ export class MixamoCharacterView implements CharacterView {
     next.reset().fadeIn(this.FADE).play();
 
     // Speed up jump animation so it matches physics
-    next.timeScale = name === 'jump' ? 3 : 1;
+    next.timeScale = name === 'jump' ? 10 : 1;
 
     this.current = next;
     this.currentName = name;
@@ -265,7 +265,8 @@ export class MixamoCharacterView implements CharacterView {
     }
 
     this.play(name);
-    const dur = (clip as any)._clip?.duration ?? 1;
+    const action = this.clips.get(name);
+    const dur = ((action as any)._clip?.duration ?? 1) / (action?.timeScale ?? 1);
     setTimeout(() => { if (this.currentName === name) this.play(returnTo); }, dur * 1000);
   }
 }
