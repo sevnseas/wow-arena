@@ -171,6 +171,7 @@ export class MixamoCharacterView implements CharacterView {
       }
       this.prevState = state;
     } else if (isMoving) {
+      // Only update movement animation while grounded (jump/fall states have isMoving=false)
       const want: AnimName = speed01 > 0.55 ? 'run' : 'walk';
       if (want !== this.currentName) this.play(want);
     }
@@ -249,7 +250,7 @@ export class MixamoCharacterView implements CharacterView {
     next.reset().fadeIn(this.FADE).play();
 
     // Speed up jump animation so it matches physics
-    next.timeScale = name === 'jump' ? 10 : 1;
+    next.timeScale = name === 'jump' ? 3 : 1;
 
     this.current = next;
     this.currentName = name;
