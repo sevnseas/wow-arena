@@ -1,55 +1,28 @@
 /**
  * Stylized Trees - Procedurally generated foliage with vertex shaders
+ * Based on https://douges.dev/blog/threejs-trees-1
  */
 
 import * as THREE from 'three';
+// @ts-ignore
+import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 
-// Foliage vertex shader for billboarding and expansion
+// Foliage vertex shader - translates vertices in view space for billboard effect
 const foliageVertexShader = `
-  varying vec2 vUv;
+  // Remap UV from [0, 1] to [-1, 1] for centered expansion
+  vec2 vertexOffset = vec2(
+    uv.x * 2.0 - 1.0,
+    uv.y * 2.0 - 1.0
+  );
 
-  void main() {
-    vUv = uv;
+  // Transform to view space (camera relative)
+  vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
 
-    // Remap UV from [0, 1] to [-1, 1] for centered expansion
-    vec2 vertexOffset = vec2(
-      uv.x * 2.0 - 1.0,
-      uv.y * 2.0 - 1.0
-    );
+  // Apply offset in camera-plane space (billboarding effect)
+  // This stretches the foliage when not viewed head-on, creating a natural look
+  mvPos.xy += vertexOffset * 0.6;
 
-    // Transform to view space (camera relative)
-    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-
-    // Scale expansion by distance for perspective effect
-    float dist = length(mvPos.xyz);
-    float scale = 0.8 + 0.2 * (1.0 - exp(-dist * 0.1));
-
-    // Apply offset in camera-plane space (billboarding)
-    mvPos.xy += vertexOffset * scale * 0.5;
-
-    gl_Position = projectionMatrix * mvPos;
-  }
-`;
-
-// Foliage fragment shader with alpha testing
-const foliageFragmentShader = `
-  uniform vec3 color;
-  varying vec2 vUv;
-
-  void main() {
-    // Create organic leaf shape using noise
-    float noise = fract(sin(vUv.x * 12.9898 + vUv.y * 78.233) * 43758.5453);
-
-    // Create clumpy alpha mask
-    float dist = length(vUv - vec2(0.5, 0.5));
-    float alpha = smoothstep(0.6, 0.3, dist);
-    alpha *= (0.6 + 0.4 * noise);
-
-    // Alpha test for performance
-    if (alpha < 0.3) discard;
-
-    gl_FragColor = vec4(color, alpha);
-  }
+  gl_Position = projectionMatrix * mvPos;
 `;
 
 /**
@@ -77,46 +50,36 @@ function createProceduralTree(
   trunk.receiveShadow = true;
   tree.add(trunk);
 
-  // Foliage - multiple layers of billboard quads
-  const foliageMaterial = new THREE.ShaderMaterial({
+  // Foliage material using CustomShaderMaterial for proper lighting
+  const foliageMaterial = new CustomShaderMaterial({
+    baseMaterial: THREE.MeshStandardMaterial,
+    color: 0x2d5016,
+    roughness: 0.7,
+    metalness: 0.0,
     vertexShader: foliageVertexShader,
-    fragmentShader: foliageFragmentShader,
-    uniforms: {
-      color: { value: new THREE.Color(0x2d5016) }
-    },
     side: THREE.DoubleSide,
     transparent: true,
-    alphaTest: 0.3
+    alphaTest: 0.5
   });
 
-  // Create foliage layers
+  // Create foliage as crossing planes (X pattern at multiple heights)
   const layerCount = 3;
   for (let layer = 0; layer < layerCount; layer++) {
     const layerHeight = height * (0.4 + layer * 0.2);
-    const layerRadius = height * (0.3 + layer * 0.15);
+    const layerSize = height * (0.6 + layer * 0.2);
 
-    // Create foliage quads
-    const quadCount = 6 + layer * 2;
-    for (let i = 0; i < quadCount; i++) {
-      const angle = (i / quadCount) * Math.PI * 2;
-      const qx = Math.cos(angle) * layerRadius;
-      const qz = Math.sin(angle) * layerRadius;
-
-      // Billboard quad geometry (properly UV mapped)
-      const geometry = new THREE.PlaneGeometry(
-        layerRadius * 0.8,
-        layerHeight * 0.4
-      );
-
-      // Reset UVs for shader (fills entire 0-1 space)
-      const uvAttribute = geometry.getAttribute('uv');
-      for (let j = 0; j < uvAttribute.count; j++) {
-        uvAttribute.setXY(j, (j % 2), Math.floor(j / 2));
-      }
+    // Two perpendicular planes (X pattern)
+    for (let plane = 0; plane < 2; plane++) {
+      const geometry = new THREE.PlaneGeometry(layerSize, layerSize);
 
       const foliage = new THREE.Mesh(geometry, foliageMaterial);
-      foliage.position.set(qx, layerHeight, qz);
-      foliage.lookAt(0, layerHeight, 0); // Face center
+      foliage.position.y = layerHeight;
+
+      // Rotate second plane 90 degrees for crossing pattern
+      if (plane === 1) {
+        foliage.rotation.y = Math.PI / 4;
+      }
+
       foliage.castShadow = true;
       foliage.receiveShadow = true;
       tree.add(foliage);
@@ -178,36 +141,28 @@ export function createBush(x: number, z: number, height: number): THREE.Group {
   bush.position.set(x, height * 0.5, z);
   bush.name = 'Bush';
 
-  const foliageMaterial = new THREE.ShaderMaterial({
+  const foliageMaterial = new CustomShaderMaterial({
+    baseMaterial: THREE.MeshStandardMaterial,
+    color: 0x3d5c1f,
+    roughness: 0.7,
+    metalness: 0.0,
     vertexShader: foliageVertexShader,
-    fragmentShader: foliageFragmentShader,
-    uniforms: {
-      color: { value: new THREE.Color(0x3d5c1f) }
-    },
     side: THREE.DoubleSide,
     transparent: true,
-    alphaTest: 0.3
+    alphaTest: 0.5
   });
 
-  // Create rounded foliage blob
-  const quadCount = 8;
-  for (let i = 0; i < quadCount; i++) {
-    const angle = (i / quadCount) * Math.PI * 2;
-    const radius = height * 0.4;
-    const qx = Math.cos(angle) * radius;
-    const qz = Math.sin(angle) * radius;
-
-    const geometry = new THREE.PlaneGeometry(height * 0.6, height * 0.6);
-
-    // Reset UVs
-    const uvAttribute = geometry.getAttribute('uv');
-    for (let j = 0; j < uvAttribute.count; j++) {
-      uvAttribute.setXY(j, (j % 2), Math.floor(j / 2));
-    }
+  // Create X-pattern crossing planes
+  for (let plane = 0; plane < 2; plane++) {
+    const geometry = new THREE.PlaneGeometry(height * 0.8, height);
 
     const foliage = new THREE.Mesh(geometry, foliageMaterial);
-    foliage.position.set(qx, 0, qz);
-    foliage.lookAt(0, 0, 0);
+    foliage.position.set(0, 0, 0);
+
+    if (plane === 1) {
+      foliage.rotation.y = Math.PI / 2;
+    }
+
     foliage.castShadow = true;
     foliage.receiveShadow = true;
     bush.add(foliage);
