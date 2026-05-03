@@ -741,7 +741,16 @@ function animateStandalone(state: GameState, delta: number): void {
     locoState = 'walk';
   }
 
-  state.playerView.setLocomotion(locoState, speed / 6);
+  // Movement direction in character-local space: rotate world velocity by
+  // -facingYaw around Y so the view can pick forward / back / strafe variants.
+  const cosF = Math.cos(state.player.facingYaw);
+  const sinF = Math.sin(state.player.facingYaw);
+  const moveLocal = new THREE.Vector3(
+    vel.x * cosF - vel.z * sinF,
+    0,
+    vel.x * sinF + vel.z * cosF
+  );
+  state.playerView.setLocomotion(locoState, speed / 6, moveLocal);
   if (showAir) state.playerView.setAirborne?.(vel.y, JUMP_FORCE);
 
   // Character always faces its own yaw, never the movement direction.

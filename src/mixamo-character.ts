@@ -4,7 +4,12 @@ import { CharacterView, LocomotionState } from './character';
 
 type AnimName =
   | 'idle' | 'walk' | 'run' | 'run_stop' | 'turn_left' | 'turn_right'
-  | 'jump' | 'cast_spell' | 'cast_heal' | 'swipe';
+  | 'jump' | 'cast_spell' | 'cast_heal' | 'swipe'
+  | 'walk_back' | 'walk_left' | 'walk_right'
+  | 'run_back'  | 'run_left'  | 'run_right';
+
+type WalkBase = 'walk' | 'run';
+type DirSuffix = '' | '_back' | '_left' | '_right';
 
 /**
  * Strip XZ root translation from a clip so the character stays in place
@@ -44,7 +49,13 @@ type AnimFiles = Record<AnimName, string>;
 const MARIA_ESSENTIAL: Partial<AnimFiles> = {
   idle:       'idle.fbx',
   walk:       'walk.fbx',
+  walk_back:  'walk_back.fbx',
+  walk_left:  'walk_left.fbx',
+  walk_right: 'walk_right.fbx',
   run:        'run.fbx',
+  run_back:   'run_back.fbx',
+  run_left:   'run_left.fbx',
+  run_right:  'run_right.fbx',
   run_stop:   'run_stop.fbx',
   turn_left:  'turn_left.fbx',
   turn_right: 'turn_right.fbx',
@@ -102,6 +113,10 @@ export class MixamoCharacterView implements CharacterView {
   // the locomotion clip for the lower body.
   private upperBodyAction: THREE.AnimationAction | null = null;
   private upperBodyFadeTimer: number | null = null;
+
+  // Last movement direction in character-local space (-Z forward, +X right).
+  // Used by pickMoveClip() to choose forward / back / strafe variants.
+  private moveLocal: THREE.Vector3 = new THREE.Vector3(0, 0, -1);
 
   private constructor(root: THREE.Group, mixer: THREE.AnimationMixer) {
     this.root = root;
@@ -166,7 +181,9 @@ export class MixamoCharacterView implements CharacterView {
     this.targetYaw = -yaw + Math.PI;
   }
 
-  setLocomotion(state: LocomotionState, speed01: number) {
+  setLocomotion(state: LocomotionState, speed01: number, moveLocal?: THREE.Vector3) {
+    if (moveLocal) this.moveLocal.copy(moveLocal);
+
     const wasMoving = this.prevState === 'walk' || this.prevState === 'run';
     const isMoving  = state === 'walk' || state === 'run';
 
@@ -185,20 +202,43 @@ export class MixamoCharacterView implements CharacterView {
       } else if (!isAirborne && wasAirborne) {
         // Landing: let the landing tail of the jump clip play out, then resume.
         this.finishLanding();
-      } else if (wasMoving && this.prevState === 'run' && state === 'idle') {
-        // run → idle: run_stop then idle
+      } else if (wasMoving && this.prevState === 'run' && state === 'idle' && this.dirSuffix() === '') {
+        // Forward run → idle gets the run_stop deceleration; strafing/backward
+        // stops would look weird with the forward-stop animation, so skip it.
         this.oneShot('run_stop', 'idle');
       } else if (isMoving) {
-        this.play(speed01 > 0.55 ? 'run' : 'walk');
+        this.play(this.pickMoveClip(speed01 > 0.55 ? 'run' : 'walk'));
       } else if (!isAirborne) {
         this.play('idle');
       }
       this.prevState = state;
     } else if (isMoving) {
-      // Only update movement animation while grounded (jump/fall states have isMoving=false)
-      const want: AnimName = speed01 > 0.55 ? 'run' : 'walk';
+      // Re-pick variant each frame so changing strafe direction mid-move
+      // swaps to the matching clip.
+      const want = this.pickMoveClip(speed01 > 0.55 ? 'run' : 'walk');
       if (want !== this.currentName) this.play(want);
     }
+  }
+
+  // Pick walk/run / walk_back / walk_left / walk_right based on which
+  // local axis dominates the movement vector. Falls back to the base
+  // clip if the directional variant isn't loaded.
+  private pickMoveClip(base: WalkBase): AnimName {
+    const suffix = this.dirSuffix();
+    if (suffix === '') return base;
+    const name = `${base}${suffix}` as AnimName;
+    return this.clips.has(name) ? name : base;
+  }
+
+  private dirSuffix(): DirSuffix {
+    const fwd = -this.moveLocal.z; // +z is back in local space
+    const rt  =  this.moveLocal.x;
+    // Hysteresis-free: dominant axis wins. If the movement is mostly forward
+    // we use the forward (suffix-less) clip; otherwise pick back / strafe.
+    if (Math.abs(fwd) >= Math.abs(rt)) {
+      return fwd >= 0 ? '' : '_back';
+    }
+    return rt >= 0 ? '_right' : '_left';
   }
 
   triggerOneShot(name: string) {

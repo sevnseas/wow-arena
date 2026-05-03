@@ -19,8 +19,12 @@ export interface CharacterView {
   /** Set the direction the character is facing (yaw in radians) */
   setFacingYaw(yaw: number): void;
 
-  /** Set locomotion state and speed (0-1) */
-  setLocomotion(state: LocomotionState, speed01: number): void;
+  /**
+   * Set locomotion state and speed (0-1). `moveLocal` is the movement
+   * direction in character-local space (-Z forward, +X right) — used to
+   * pick strafe / backward variants of walk/run when available.
+   */
+  setLocomotion(state: LocomotionState, speed01: number, moveLocal?: THREE.Vector3): void;
 
   /**
    * Drive the jump animation cursor from physics.
@@ -236,7 +240,7 @@ export class ProceduralCharacterView implements CharacterView {
     this.targetYaw = yaw;
   }
 
-  setLocomotion(state: LocomotionState, speed01: number): void {
+  setLocomotion(state: LocomotionState, speed01: number, _moveLocal?: THREE.Vector3): void {
     this.state = state;
     this.speed01 = Math.max(0, Math.min(1, speed01));
   }
@@ -417,7 +421,7 @@ export class GltfCharacterView implements CharacterView {
     // TODO
   }
 
-  setLocomotion(_state: LocomotionState, _speed01: number): void {
+  setLocomotion(_state: LocomotionState, _speed01: number, _moveLocal?: THREE.Vector3): void {
     // TODO
   }
 
