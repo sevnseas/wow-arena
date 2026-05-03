@@ -82,6 +82,13 @@ interface GameState {
   // animation for transient ungrounded frames (e.g. walking down small
   // terrain bumps). Reset to 0 on touch-down.
   airborneTime: number;
+
+  // Auto-attack state: after a melee ability lands, keep swinging at the
+  // target on a swing timer while in range. Visual + flashHit only.
+  autoAttackTargetId: string | null;
+  autoAttackRange: number;
+  autoAttackSwingTimer: number;     // seconds until next swing
+  autoAttackOORTime: number;        // seconds out of range — cancels after grace
 }
 
 // ============================================================================
@@ -385,7 +392,20 @@ function tryUseAbility(state: GameState, key: string): void {
 
   // Trigger ability animation — pass ability.id so Mixamo view can pick the right clip
   if (ability.castTime === 0) {
-    state.playerView.triggerOneShot(ability.id);
+    if (ability.id === 'rogue_hemorrhage') {
+      // Layered upper-body swing so the run anim keeps playing on the legs.
+      state.playerView.triggerUpperBodyAttack?.(0.45);
+    } else {
+      state.playerView.triggerOneShot(ability.id);
+    }
+  }
+
+  // Hemorrhage starts (or refreshes) auto-attack on the target.
+  if (ability.id === 'rogue_hemorrhage' && target) {
+    state.autoAttackTargetId = target.id;
+    state.autoAttackRange = ability.range;
+    state.autoAttackSwingTimer = 1.5;  // first auto-swing 1.5s after the manual hit
+    state.autoAttackOORTime = 0;
   }
 
   ability.execute(ctx);
@@ -408,6 +428,40 @@ function flashSlotError(key: string): void {
       slot.classList.remove('pressed');
       (slot as HTMLElement).style.borderColor = '';
     }, 150);
+  }
+}
+
+/**
+ * Auto-attack: while a melee target is set and within range, play a layered
+ * upper-body swing on the swing timer. Cancels if the target despawns or
+ * the player stays out of range past the grace window.
+ */
+function updateAutoAttack(state: GameState, delta: number): void {
+  if (!state.autoAttackTargetId) return;
+
+  const targetMesh = state.entities.get(state.autoAttackTargetId);
+  if (!targetMesh) {
+    state.autoAttackTargetId = null;
+    return;
+  }
+
+  const dist = state.player.position.distanceTo(targetMesh.position);
+  // Small leeway on top of the ability range so jitter at the edge doesn't bounce.
+  const inRange = dist <= state.autoAttackRange + 0.5;
+
+  if (inRange) {
+    state.autoAttackOORTime = 0;
+    state.autoAttackSwingTimer -= delta;
+    if (state.autoAttackSwingTimer <= 0) {
+      state.playerView.triggerUpperBodyAttack?.(0.45);
+      flashEntityHit(state, state.autoAttackTargetId);
+      state.autoAttackSwingTimer = 1.5;
+    }
+  } else {
+    state.autoAttackOORTime += delta;
+    if (state.autoAttackOORTime > 3) {
+      state.autoAttackTargetId = null;
+    }
   }
 }
 
@@ -619,6 +673,10 @@ async function init(): Promise<GameState> {
     mode,
     network,
     airborneTime: 0,
+    autoAttackTargetId: null,
+    autoAttackRange: 0,
+    autoAttackSwingTimer: 0,
+    autoAttackOORTime: 0,
   };
 
   setupInput(state);
@@ -702,6 +760,7 @@ function animateStandalone(state: GameState, delta: number): void {
   state.debuffs.update();
   state.casts.update();
   state.projectiles.update(delta);
+  updateAutoAttack(state, delta);
 
   // Update UI
   updateActionBar(state);

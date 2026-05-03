@@ -35,6 +35,13 @@ export interface CharacterView {
   triggerOneShot(name: string): void;
 
   /**
+   * Play a layered upper-body swing on top of whatever locomotion is
+   * currently playing. Used for auto-attack swings while running so the
+   * legs keep moving. Falls back to a full-body one-shot if not supported.
+   */
+  triggerUpperBodyAttack?(durationSec?: number): void;
+
+  /**
    * Start casting animation. If `castTime` is provided, the clip is
    * time-scaled to finish in sync with the channel.
    */

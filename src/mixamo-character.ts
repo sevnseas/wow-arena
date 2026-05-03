@@ -97,6 +97,12 @@ export class MixamoCharacterView implements CharacterView {
   // calls during a channel don't keep resetting the clip to frame 0 (T-pose).
   private isCastingActive = false;
 
+  // Layered upper-body action built from the swipe clip with hip/leg tracks
+  // stripped, so it can play simultaneously with walk/run without fighting
+  // the locomotion clip for the lower body.
+  private upperBodyAction: THREE.AnimationAction | null = null;
+  private upperBodyFadeTimer: number | null = null;
+
   private constructor(root: THREE.Group, mixer: THREE.AnimationMixer) {
     this.root = root;
     this.mixer = mixer;
@@ -134,6 +140,7 @@ export class MixamoCharacterView implements CharacterView {
       removeRootMotionXZ(clip);
       view.clips.set(name, mixer.clipAction(clip));
       console.log(`✓ ${name} (${clip.duration.toFixed(2)}s)`);
+      if (name === 'swipe') view.buildUpperBodyAction(clip);
     };
 
     essentialFbxs.forEach((fbx, i) => registerClip(essentialEntries[i][0], fbx));
@@ -238,6 +245,56 @@ export class MixamoCharacterView implements CharacterView {
     }
   }
   setDebuffed(debuffed: boolean) { this.mixer.timeScale = debuffed ? 0.5 : 1; }
+
+  /**
+   * Trigger a layered swipe on the upper body without disturbing the
+   * locomotion clip. The character keeps walking/running while the arms
+   * and torso play the swing. Used by the auto-attack swing timer.
+   *
+   * Falls back to a normal full-body one-shot if the upper-body action
+   * isn't ready (e.g. swipe still lazy-loading).
+   */
+  triggerUpperBodyAttack(durationSec: number = 0.5) {
+    const action = this.upperBodyAction;
+    if (!action) {
+      this.triggerOneShot('rogue_hemorrhage');
+      return;
+    }
+    const clipDur = (action as any)._clip?.duration as number | undefined;
+    if (clipDur && clipDur > 0) action.timeScale = clipDur / durationSec;
+    action.setEffectiveWeight(1).reset().fadeIn(0.08).play();
+    if (this.upperBodyFadeTimer !== null) clearTimeout(this.upperBodyFadeTimer);
+    // Schedule a fade-out just before the clip clamps so the arms blend
+    // smoothly back into the locomotion pose instead of snapping.
+    this.upperBodyFadeTimer = window.setTimeout(() => {
+      this.upperBodyFadeTimer = null;
+      action.fadeOut(0.15);
+    }, Math.max(50, durationSec * 1000 - 100));
+  }
+
+  // Build a parallel AnimationAction whose clip animates only the upper
+  // body bones (spine, chest, neck, head, shoulders, arms, hands). Hip
+  // and leg tracks are dropped so the locomotion clip retains full
+  // control of the lower body when both actions play at once.
+  private buildUpperBodyAction(swipeClip: THREE.AnimationClip) {
+    const upperTracks = swipeClip.tracks.filter(t => {
+      const n = t.name.toLowerCase();
+      // Reject lower body first so e.g. "leftupleg" doesn't get kept by "leg".
+      if (/(hips|upleg|leg|foot|toe)/.test(n)) return false;
+      // Match "spine", "spine1", "spine2", "leftarm", "rightforearm", etc.
+      return /(spine|chest|neck|head|shoulder|arm|hand)/.test(n);
+    });
+    if (upperTracks.length === 0) {
+      console.warn('upper-body filter matched 0 tracks — autoattack will fall back to full-body');
+      return;
+    }
+    const upperClip = new THREE.AnimationClip('swipe_upper', swipeClip.duration, upperTracks);
+    this.upperBodyAction = this.mixer.clipAction(upperClip);
+    this.upperBodyAction.loop = THREE.LoopOnce;
+    this.upperBodyAction.clampWhenFinished = false;
+    this.upperBodyAction.setEffectiveWeight(0); // dormant until triggered
+    console.log(`✓ swipe_upper (${upperTracks.length}/${swipeClip.tracks.length} tracks)`);
+  }
 
   setAirborne(velY: number, jumpForce: number) {
     const action = this.clips.get('jump');
