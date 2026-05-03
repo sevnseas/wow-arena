@@ -27,6 +27,7 @@ import { ClassName, AbilityContext, getClassAbilities, getAbilityByKey } from '.
 import { getModeFromUrl, GameMode } from './mode';
 import { NetworkGame, ConnectionState } from './net';
 import { SkyEnvironment } from './sky';
+import { JUMP_FORCE } from './shared/physics';
 
 // ============================================================================
 // Character Factory
@@ -76,6 +77,11 @@ interface GameState {
   // Phase 4: Network state
   mode: GameMode;
   network: NetworkGame | null;
+
+  // Sustained airborne duration in seconds — used to suppress the jump
+  // animation for transient ungrounded frames (e.g. walking down small
+  // terrain bumps). Reset to 0 on touch-down.
+  airborneTime: number;
 }
 
 // ============================================================================
@@ -193,7 +199,7 @@ function updateCastBar(state: GameState): void {
     const progress = state.casts.castProgress * 100;
     fill.style.width = `${progress}%`;
     text.textContent = info.abilityName;
-    state.playerView.startCasting();
+    state.playerView.startCasting(info.castTime);
   } else {
     castBar.classList.remove('active');
     state.playerView.stopCasting();
@@ -611,7 +617,8 @@ async function init(): Promise<GameState> {
     classSelectOpen: false,
     ccCubes: new Map(),
     mode,
-    network
+    network,
+    airborneTime: 0,
   };
 
   setupInput(state);
@@ -659,8 +666,14 @@ function animateStandalone(state: GameState, delta: number): void {
   const speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
   const isGrounded = state.player.isGrounded;
 
+  if (isGrounded) state.airborneTime = 0;
+  else             state.airborneTime += delta;
+  // Treat as airborne for animation only if intentionally jumping (positive
+  // vertical velocity) or sustained airtime — terrain microbumps stay grounded.
+  const showAir = !isGrounded && (vel.y > 0.5 || state.airborneTime > 0.12);
+
   let locoState: LocomotionState = 'idle';
-  if (!isGrounded) {
+  if (showAir) {
     locoState = vel.y > 0 ? 'jump' : 'fall';
   } else if (speed > 4) {
     locoState = 'run';
@@ -669,6 +682,7 @@ function animateStandalone(state: GameState, delta: number): void {
   }
 
   state.playerView.setLocomotion(locoState, speed / 6);
+  if (showAir) state.playerView.setAirborne?.(vel.y, JUMP_FORCE);
 
   if (speed > 0.1) {
     const moveYaw = dirToYaw(new THREE.Vector3(vel.x, 0, vel.z));
@@ -715,8 +729,12 @@ function animateMultiplayer(state: GameState, delta: number): void {
     // Update player character view based on velocity
     const speed = Math.sqrt(localState.vel.x ** 2 + localState.vel.z ** 2);
 
+    if (localState.isGrounded) state.airborneTime = 0;
+    else                       state.airborneTime += delta;
+    const showAir = !localState.isGrounded && (localState.vel.y > 0.5 || state.airborneTime > 0.12);
+
     let locoState: LocomotionState = 'idle';
-    if (!localState.isGrounded) {
+    if (showAir) {
       locoState = localState.vel.y > 0 ? 'jump' : 'fall';
     } else if (speed > 4) {
       locoState = 'run';
@@ -725,6 +743,7 @@ function animateMultiplayer(state: GameState, delta: number): void {
     }
 
     state.playerView.setLocomotion(locoState, speed / 6);
+    if (showAir) state.playerView.setAirborne?.(localState.vel.y, JUMP_FORCE);
 
     if (speed > 0.1) {
       const moveYaw = Math.atan2(localState.vel.x, localState.vel.z);

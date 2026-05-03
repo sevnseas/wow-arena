@@ -22,11 +22,23 @@ export interface CharacterView {
   /** Set locomotion state and speed (0-1) */
   setLocomotion(state: LocomotionState, speed01: number): void;
 
+  /**
+   * Drive the jump animation cursor from physics.
+   * `velY` is current vertical velocity, `jumpForce` is takeoff velocity.
+   * Maps the full jump arc (+jumpForce → 0 → -jumpForce) to the airborne
+   * portion of the clip so takeoff frames play during ascent and the
+   * landing tail is reserved for ground contact.
+   */
+  setAirborne?(velY: number, jumpForce: number): void;
+
   /** Trigger a one-shot animation (attack, spell, etc) */
   triggerOneShot(name: string): void;
 
-  /** Start casting animation (arms raised) */
-  startCasting(): void;
+  /**
+   * Start casting animation. If `castTime` is provided, the clip is
+   * time-scaled to finish in sync with the channel.
+   */
+  startCasting(castTime?: number): void;
 
   /** Stop casting animation */
   stopCasting(): void;
@@ -228,7 +240,7 @@ export class ProceduralCharacterView implements CharacterView {
     this.attackAnimDuration = 0.5;
   }
 
-  startCasting(): void {
+  startCasting(_castTime?: number): void {
     this.isCasting = true;
   }
 
@@ -406,7 +418,7 @@ export class GltfCharacterView implements CharacterView {
     // TODO
   }
 
-  startCasting(): void {
+  startCasting(_castTime?: number): void {
     // TODO
   }
 
