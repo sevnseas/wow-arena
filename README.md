@@ -60,10 +60,24 @@ src/
 ├── targeting.ts         # Click-to-target raycasting
 ├── character.ts         # Procedural character mesh + animation (CharacterView interface)
 ├── mixamo-character.ts  # Mixamo FBX loader implementing CharacterView
-├── arena.ts             # Arena geometry, colliders
+├── arena.ts             # Arena geometry, colliders, boundary walls with entrances
+├── terrain.ts           # Low-poly procedural terrain using simplex noise
+├── trees.ts             # Stylized procedural trees with billboard foliage
+├── sky.ts               # Dynamic sky with time-of-day
 ├── entities.ts          # NPC spawn definitions
 └── coords.ts            # Coordinate helpers (+Y up, -Z forward)
 ```
+
+## Environment
+
+### Terrain (`src/terrain.ts`)
+Procedurally generated low-poly landscape using layered simplex noise. The terrain generates a continuous heightmap and applies vertex colors based on elevation (grass → stone → peaks). Character physics queries terrain height at the player position to provide natural ground level, preventing clipping. The terrain serves as both a visual backdrop and a collision/movement surface that affects player grounding.
+
+### Trees (`src/trees.ts`)
+Stylized procedural trees placed around the arena perimeter (outside combat area). Trees use crossing plane geometry with billboard effects to create a fluffy foliage silhouette from any angle. The forest spawns 12 trees at random distances/angles while respecting terrain height. Each tree casts shadows for atmospheric depth. See `foliage.md` for references and `stylized-trees.md` for implementation notes on the vertex shader billboard technique.
+
+### Skybox (`src/sky.ts`)
+Dynamic sky that cycles through day/night based on elapsed time. The system renders a procedural sky gradient and animated sun/moon with fog to create atmospheric depth. Time-of-day affects lighting color and intensity, creating a living environment that changes continuously during play.
 
 ## Entity Hierarchy
 

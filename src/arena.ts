@@ -6,6 +6,7 @@ import * as THREE from 'three';
 // @ts-ignore - JS texture modules
 import { createTexture as createCeramicTexture } from './textures/ceramic_gray.js';
 import { createTerrain, createWaterPlane } from './terrain';
+import { createForest } from './trees';
 
 // Arena dimensions
 const ARENA_SIZE = 40;
@@ -240,6 +241,9 @@ export function createArena(): THREE.Group {
 
   // Boundary walls
   arena.add(createBoundaryWalls());
+
+  // Forest
+  arena.add(createForest(terrainHeightData));
 
   return arena;
 }
