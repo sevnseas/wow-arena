@@ -35,9 +35,10 @@ function generateHeightData(width: number, height: number): Uint8Array {
 }
 
 /**
- * Get terrain height at world coordinates (with caching)
+ * Get terrain height at world coordinates
  */
-export function getTerrainHeight(x: number, z: number, heightData: Uint8Array): number {
+export function getTerrainHeight(x: number, z: number, heightData: Uint8Array | null): number {
+  if (!heightData) return 0;
   const centerX = TERRAIN_SIZE / 2;
   const centerZ = TERRAIN_SIZE / 2;
   const localX = Math.floor(x + centerX);

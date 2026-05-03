@@ -15,7 +15,7 @@
 
 import * as THREE from 'three';
 import { createAxisGizmo, dirToYaw } from './coords';
-import { createArena, getColliders } from './arena';
+import { createArena, getColliders, getTerrainHeightData } from './arena';
 import { CameraRig } from './camera';
 import { PlayerController } from './player';
 import { TargetingSystem } from './targeting';
@@ -527,6 +527,7 @@ async function init(): Promise<GameState> {
   );
   player.mesh = playerView.root;
   player.setColliders(getColliders());
+  player.setTerrainHeightData(getTerrainHeightData());
 
   // Only attach local input in standalone mode
   // In multiplayer, NetworkGame handles input

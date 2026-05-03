@@ -33,8 +33,9 @@ export interface BoxCollider {
 
 export type Collider = CylinderCollider | BoxCollider;
 
-// Store colliders for export
+// Store colliders and terrain data for export
 const colliders: Collider[] = [];
+let terrainHeightData: Uint8Array | null = null;
 
 // Cached textures
 let ceramicTexture: THREE.CanvasTexture | undefined;
@@ -202,6 +203,13 @@ export function getColliders(): Collider[] {
 }
 
 /**
+ * Get terrain height data for physics
+ */
+export function getTerrainHeightData(): Uint8Array | null {
+  return terrainHeightData;
+}
+
+/**
  * Build the complete arena scene
  */
 export function createArena(): THREE.Group {
@@ -212,7 +220,8 @@ export function createArena(): THREE.Group {
   arena.name = 'Arena';
 
   // Terrain (replaces flat ground plane)
-  const { mesh: terrain } = createTerrain();
+  const { mesh: terrain, heightData } = createTerrain();
+  terrainHeightData = heightData;
   arena.add(terrain);
 
   // Water plane

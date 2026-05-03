@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { yawToDir, assertFiniteVec3, prettyVec } from './coords';
 import type { Collider, CylinderCollider, BoxCollider } from './arena';
 import { ARENA_BOUND } from './shared/physics';
+import { getTerrainHeight } from './terrain';
 
 export interface PlayerConfig {
   moveSpeed: number;
@@ -32,6 +33,7 @@ export class PlayerController {
   public isGrounded: boolean = true;
   private groundLevel: number = 0; // Current ground height (can be on box)
   private colliders: Collider[] = [];
+  private terrainHeightData: Uint8Array | null = null;
 
   // Input state
   private keys: Set<string> = new Set();
@@ -55,6 +57,13 @@ export class PlayerController {
    */
   setColliders(colliders: Collider[]): void {
     this.colliders = colliders;
+  }
+
+  /**
+   * Set terrain height data for ground detection
+   */
+  setTerrainHeightData(heightData: Uint8Array | null): void {
+    this.terrainHeightData = heightData;
   }
 
   /**
@@ -189,8 +198,8 @@ export class PlayerController {
    * Resolve collisions with arena geometry
    */
   private resolveCollisions(): void {
-    // Reset ground level to base
-    let newGroundLevel = this.config.groundY;
+    // Start with terrain height
+    let newGroundLevel = getTerrainHeight(this.position.x, this.position.z, this.terrainHeightData);
 
     for (const col of this.colliders) {
       if (col.type === 'cylinder') {
