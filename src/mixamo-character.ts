@@ -48,9 +48,9 @@ const MARIA_ESSENTIAL: Partial<AnimFiles> = {
   run_stop:   'run_stop.fbx',
   turn_left:  'turn_left.fbx',
   turn_right: 'turn_right.fbx',
+  jump:       'jump_mutant.fbx',   // Cross-rig, essential for gameplay
 };
 const MARIA_OPTIONAL: Partial<AnimFiles> = {
-  jump:       'jump_mutant.fbx',   // ~20 MB cross-rig
   cast_spell: 'cast_spell.fbx',   // ~20 MB cross-rig
   cast_heal:  'cast_heal.fbx',    // ~20 MB cross-rig
 };
@@ -62,9 +62,9 @@ const MUTANT_ESSENTIAL: Partial<AnimFiles> = {
   run_stop:   'mutant_run.fbx',
   turn_left:  'mutant_left_turn_45.fbx',
   turn_right: 'mutant_right_turn_45.fbx',
+  jump:       'mutant_jumping.fbx',
 };
 const MUTANT_OPTIONAL: Partial<AnimFiles> = {
-  jump:       'mutant_jumping.fbx',
   cast_spell: 'mutant_swiping.fbx',
   cast_heal:  'mutant_flexing_muscles.fbx',
 };
