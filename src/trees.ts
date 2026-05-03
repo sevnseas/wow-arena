@@ -1,172 +1,243 @@
 /**
- * Stylized Trees - Procedurally generated foliage with vertex shaders
- * Based on https://douges.dev/blog/threejs-trees-1
+ * Stylized Trees - faithful port of https://douges.dev/blog/threejs-trees-1
+ * Uses douges' tree.glb + foliage_alpha3.png with vertex-shader leaf billboarding & wind sway.
  */
 
 import * as THREE from 'three';
-// @ts-ignore
-import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// Foliage vertex shader - translates vertices in view space for billboard effect
-const foliageVertexShader = `
-  // Remap UV from [0, 1] to [-1, 1] for centered expansion
-  vec2 vertexOffset = vec2(
-    uv.x * 2.0 - 1.0,
-    uv.y * 2.0 - 1.0
-  );
+const TREE_GLB_URL = 'https://douges.dev/static/tree.glb';
+const FOLIAGE_ALPHA_URL = 'https://douges.dev/static/foliage_alpha3.png';
 
-  // Transform to view space (camera relative)
-  vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+interface FoliageUniforms {
+  u_effectBlend: { value: number };
+  u_inflate: { value: number };
+  u_scale: { value: number };
+  u_windSpeed: { value: number };
+  u_windTime: { value: number };
+}
 
-  // Apply offset in camera-plane space (billboarding effect)
-  // This stretches the foliage when not viewed head-on, creating a natural look
-  mvPos.xy += vertexOffset * 0.6;
+// Single shared uniforms object so wind animates all foliage in sync at minimal cost
+const sharedUniforms: FoliageUniforms = {
+  u_effectBlend: { value: 1.0 },
+  u_inflate: { value: 0.0 },
+  u_scale: { value: 1.0 },
+  u_windSpeed: { value: 1.0 },
+  u_windTime: { value: 0.0 }
+};
 
-  gl_Position = projectionMatrix * mvPos;
-`;
+let tickerStarted = false;
+function startWindTicker() {
+  if (tickerStarted) return;
+  tickerStarted = true;
+  let last = performance.now();
+  const tick = (now: number) => {
+    const delta = (now - last) / 1000;
+    last = now;
+    sharedUniforms.u_windTime.value += sharedUniforms.u_windSpeed.value * delta;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
 
-/**
- * Create a procedural tree with trunk and foliage
- */
-function createProceduralTree(
-  x: number,
-  z: number,
-  height: number
-): THREE.Group {
-  const tree = new THREE.Group();
-  tree.position.set(x, height, z);
-  tree.name = 'Tree';
-
-  // Trunk
-  const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.5, height * 0.6, 8);
-  const trunkMaterial = new THREE.MeshStandardMaterial({
-    color: 0x5d4037,
-    roughness: 0.8,
+function createFoliageMaterial(alphaMap: THREE.Texture): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#3f6d21'),
+    alphaMap,
+    alphaTest: 0.5,
+    transparent: false,
+    side: THREE.FrontSide,
+    roughness: 0.9,
     metalness: 0.0
   });
-  const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-  trunk.position.y = height * 0.3;
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.u_effectBlend = sharedUniforms.u_effectBlend;
+    shader.uniforms.u_inflate = sharedUniforms.u_inflate;
+    shader.uniforms.u_scale = sharedUniforms.u_scale;
+    shader.uniforms.u_windSpeed = sharedUniforms.u_windSpeed;
+    shader.uniforms.u_windTime = sharedUniforms.u_windTime;
+
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <common>',
+      /* glsl */ `
+      #include <common>
+      uniform float u_effectBlend;
+      uniform float u_inflate;
+      uniform float u_scale;
+      uniform float u_windSpeed;
+      uniform float u_windTime;
+
+      float inverseLerp(float v, float minValue, float maxValue) {
+        return (v - minValue) / (maxValue - minValue);
+      }
+      float remap(float v, float inMin, float inMax, float outMin, float outMax) {
+        return mix(outMin, outMax, inverseLerp(v, inMin, inMax));
+      }
+      mat4 rotateZ(float radians) {
+        float c = cos(radians);
+        float s = sin(radians);
+        return mat4(c, -s, 0, 0,  s, c, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1);
+      }
+      vec4 applyWind(vec4 v) {
+        float boundedYNormal = remap(normal.y, -1.0, 1.0, 0.0, 1.0);
+        float posXZ = position.x + position.z;
+        float power = u_windSpeed / 5.0 * -0.5;
+        float topFacing = remap(sin(u_windTime + posXZ), -1.0, 1.0, 0.0, power);
+        float bottomFacing = remap(cos(u_windTime + posXZ), -1.0, 1.0, 0.0, 0.05);
+        float radians = mix(bottomFacing, topFacing, boundedYNormal);
+        return rotateZ(radians) * v;
+      }
+      vec2 calcInitialOffsetFromUVs() {
+        vec2 offset = vec2(
+          remap(uv.x, 0.0, 1.0, -1.0, 1.0),
+          remap(uv.y, 0.0, 1.0, -1.0, 1.0)
+        );
+        offset *= vec2(-1.0, 1.0);
+        offset = normalize(offset) * u_scale;
+        return offset;
+      }
+      vec3 inflateOffset(vec3 offset) {
+        return offset + normal.xyz * u_inflate;
+      }
+      `
+    );
+
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <project_vertex>',
+      /* glsl */ `
+      vec2 vertexOffset = calcInitialOffsetFromUVs();
+      vec3 inflatedVertexOffset = inflateOffset(vec3(vertexOffset, 0.0));
+
+      vec4 worldViewPosition = modelViewMatrix * vec4(transformed, 1.0);
+      worldViewPosition += vec4(mix(vec3(0.0), inflatedVertexOffset, u_effectBlend), 0.0);
+      worldViewPosition = applyWind(worldViewPosition);
+
+      gl_Position = projectionMatrix * worldViewPosition;
+      `
+    );
+  };
+
+  return material;
+}
+
+interface TreeAssets {
+  trunkGeometry: THREE.BufferGeometry;
+  foliageGeometry: THREE.BufferGeometry;
+  foliageMaterial: THREE.MeshStandardMaterial;
+  trunkMaterial: THREE.MeshBasicMaterial;
+}
+
+let assetsPromise: Promise<TreeAssets> | null = null;
+function loadTreeAssets(): Promise<TreeAssets> {
+  if (assetsPromise) return assetsPromise;
+
+  const gltfLoader = new GLTFLoader();
+  const texLoader = new THREE.TextureLoader();
+  texLoader.setCrossOrigin('anonymous');
+
+  const gltfP = new Promise<THREE.Group>((resolve, reject) => {
+    gltfLoader.setCrossOrigin('anonymous');
+    gltfLoader.load(TREE_GLB_URL, (gltf) => resolve(gltf.scene), undefined, reject);
+  });
+  const texP = new Promise<THREE.Texture>((resolve, reject) => {
+    texLoader.load(FOLIAGE_ALPHA_URL, (t) => resolve(t), undefined, reject);
+  });
+
+  assetsPromise = Promise.all([gltfP, texP]).then(([scene, alphaMap]) => {
+    alphaMap.colorSpace = THREE.NoColorSpace;
+    alphaMap.wrapS = THREE.ClampToEdgeWrapping;
+    alphaMap.wrapT = THREE.ClampToEdgeWrapping;
+
+    let trunkGeometry: THREE.BufferGeometry | null = null;
+    let foliageGeometry: THREE.BufferGeometry | null = null;
+    scene.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.name === 'trunk') trunkGeometry = mesh.geometry;
+        else if (mesh.name === 'foliage') foliageGeometry = mesh.geometry;
+      }
+    });
+    if (!trunkGeometry || !foliageGeometry) {
+      throw new Error('tree.glb missing expected "trunk" or "foliage" mesh');
+    }
+
+    const foliageMaterial = createFoliageMaterial(alphaMap);
+    const trunkMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+    startWindTicker();
+
+    return { trunkGeometry, foliageGeometry, foliageMaterial, trunkMaterial };
+  });
+
+  return assetsPromise;
+}
+
+function buildTreeMesh(assets: TreeAssets, scale: number): THREE.Group {
+  const tree = new THREE.Group();
+  tree.name = 'Tree';
+
+  const trunk = new THREE.Mesh(assets.trunkGeometry, assets.trunkMaterial);
   trunk.castShadow = true;
   trunk.receiveShadow = true;
   tree.add(trunk);
 
-  // Foliage material using CustomShaderMaterial for proper lighting
-  const foliageMaterial = new CustomShaderMaterial({
-    baseMaterial: THREE.MeshStandardMaterial,
-    color: 0x2d5016,
-    roughness: 0.7,
-    metalness: 0.0,
-    vertexShader: foliageVertexShader,
-    side: THREE.DoubleSide,
-    transparent: true,
-    alphaTest: 0.5
-  });
+  const foliage = new THREE.Mesh(assets.foliageGeometry, assets.foliageMaterial);
+  foliage.castShadow = true;
+  foliage.receiveShadow = true;
+  tree.add(foliage);
 
-  // Create foliage as crossing planes (X pattern at multiple heights)
-  const layerCount = 3;
-  for (let layer = 0; layer < layerCount; layer++) {
-    const layerHeight = height * (0.4 + layer * 0.2);
-    const layerSize = height * (0.6 + layer * 0.2);
-
-    // Two perpendicular planes (X pattern)
-    for (let plane = 0; plane < 2; plane++) {
-      const geometry = new THREE.PlaneGeometry(layerSize, layerSize);
-
-      const foliage = new THREE.Mesh(geometry, foliageMaterial);
-      foliage.position.y = layerHeight;
-
-      // Rotate second plane 90 degrees for crossing pattern
-      if (plane === 1) {
-        foliage.rotation.y = Math.PI / 4;
-      }
-
-      foliage.castShadow = true;
-      foliage.receiveShadow = true;
-      tree.add(foliage);
-    }
-  }
-
+  tree.scale.setScalar(scale);
   return tree;
 }
 
 /**
- * Create a forest in the arena surroundings
+ * Create a forest in the arena surroundings.
+ * Returns immediately with an empty group; trees are added asynchronously once assets load.
  */
 export function createForest(terrainHeightData: Uint8Array | null): THREE.Group {
   const forest = new THREE.Group();
   forest.name = 'Forest';
 
-  // Tree placement area (outside core arena)
-  const minDist = 16; // Minimum distance from center (arena core)
-  const maxDist = 40; // Maximum distance from center (terrain edge)
-  const treeCount = 12;
+  const minDist = 16;
+  const maxDist = 40;
+  const treeCount = 14;
 
+  const placements: Array<{ x: number; z: number; y: number; scale: number; rotY: number }> = [];
   for (let i = 0; i < treeCount; i++) {
-    // Random angle and distance for natural placement
     const angle = Math.random() * Math.PI * 2;
     const dist = minDist + Math.random() * (maxDist - minDist);
-
     const x = Math.cos(angle) * dist;
     const z = Math.sin(angle) * dist;
 
-    // Vary tree height
-    const baseHeight = 4 + Math.random() * 3;
-
-    // Get terrain height at this location
     let terrainHeight = 0;
     if (terrainHeightData) {
-      const centerX = 50;
-      const centerZ = 50;
-      const localX = Math.floor(x + centerX);
-      const localZ = Math.floor(z + centerZ);
-      const clampedX = Math.max(0, Math.min(99, localX));
-      const clampedZ = Math.max(0, Math.min(99, localZ));
-      const dataIndex = clampedZ * 100 + clampedX;
-      terrainHeight = (terrainHeightData[dataIndex] / 255) * 3;
+      const localX = Math.max(0, Math.min(99, Math.floor(x + 50)));
+      const localZ = Math.max(0, Math.min(99, Math.floor(z + 50)));
+      terrainHeight = (terrainHeightData[localZ * 100 + localX] / 255) * 3;
     }
 
-    const tree = createProceduralTree(x, z, baseHeight);
-    tree.position.y = terrainHeight;
-    forest.add(tree);
+    placements.push({
+      x,
+      z,
+      y: terrainHeight,
+      scale: 1.6 + Math.random() * 1.0,
+      rotY: Math.random() * Math.PI * 2
+    });
   }
+
+  loadTreeAssets()
+    .then((assets) => {
+      for (const p of placements) {
+        const tree = buildTreeMesh(assets, p.scale);
+        tree.position.set(p.x, p.y, p.z);
+        tree.rotation.y = p.rotY;
+        forest.add(tree);
+      }
+    })
+    .catch((err) => {
+      console.error('[trees] failed to load tree assets', err);
+    });
 
   return forest;
-}
-
-/**
- * Create a single stylized bush/shrub
- */
-export function createBush(x: number, z: number, height: number): THREE.Group {
-  const bush = new THREE.Group();
-  bush.position.set(x, height * 0.5, z);
-  bush.name = 'Bush';
-
-  const foliageMaterial = new CustomShaderMaterial({
-    baseMaterial: THREE.MeshStandardMaterial,
-    color: 0x3d5c1f,
-    roughness: 0.7,
-    metalness: 0.0,
-    vertexShader: foliageVertexShader,
-    side: THREE.DoubleSide,
-    transparent: true,
-    alphaTest: 0.5
-  });
-
-  // Create X-pattern crossing planes
-  for (let plane = 0; plane < 2; plane++) {
-    const geometry = new THREE.PlaneGeometry(height * 0.8, height);
-
-    const foliage = new THREE.Mesh(geometry, foliageMaterial);
-    foliage.position.set(0, 0, 0);
-
-    if (plane === 1) {
-      foliage.rotation.y = Math.PI / 2;
-    }
-
-    foliage.castShadow = true;
-    foliage.receiveShadow = true;
-    bush.add(foliage);
-  }
-
-  return bush;
 }
