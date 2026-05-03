@@ -15,7 +15,7 @@
 
 import * as THREE from 'three';
 import { createAxisGizmo, dirToYaw } from './coords';
-import { createArena, createArenaLighting, getColliders } from './arena';
+import { createArena, getColliders } from './arena';
 import { CameraRig } from './camera';
 import { PlayerController } from './player';
 import { TargetingSystem } from './targeting';
@@ -26,6 +26,7 @@ import { CooldownManager, DebuffManager, CastSystem, ProjectileSystem } from './
 import { ClassName, AbilityContext, getClassAbilities, getAbilityByKey } from './abilities';
 import { getModeFromUrl, GameMode } from './mode';
 import { NetworkGame, ConnectionState } from './net';
+import { SkyEnvironment } from './sky';
 
 // ============================================================================
 // Character Factory
@@ -53,6 +54,7 @@ interface GameState {
   scene: THREE.Scene;
   renderer: THREE.WebGLRenderer;
   cameraRig: CameraRig;
+  sky: SkyEnvironment;
   player: PlayerController;
   playerView: CharacterView;
   targeting: TargetingSystem;
@@ -492,8 +494,8 @@ async function init(): Promise<GameState> {
   const arena = createArena();
   scene.add(arena);
 
-  const lighting = createArenaLighting();
-  scene.add(lighting);
+  const sky = new SkyEnvironment();
+  scene.add(sky);
 
   const axisGizmo = createAxisGizmo(2);
   axisGizmo.position.set(0, 0.01, 0);
@@ -593,6 +595,7 @@ async function init(): Promise<GameState> {
     scene,
     renderer,
     cameraRig,
+    sky,
     player,
     playerView,
     targeting,
@@ -675,6 +678,7 @@ function animateStandalone(state: GameState, delta: number): void {
 
   // Update camera
   state.cameraRig.update(state.player.position);
+  state.sky.update(delta, state.player.position, state.cameraRig.camera, state.scene);
 
   // Update targeting
   state.targeting.update(state.player.position);
@@ -731,6 +735,7 @@ function animateMultiplayer(state: GameState, delta: number): void {
 
   // Update camera
   state.cameraRig.update(state.player.position);
+  state.sky.update(delta, state.player.position, state.cameraRig.camera, state.scene);
 
   // Update targeting
   state.targeting.update(state.player.position);
