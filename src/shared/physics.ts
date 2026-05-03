@@ -16,7 +16,7 @@ export const PLAYER_HEIGHT = 1.8;
 
 // Arena bounds
 export const ARENA_SIZE = 40;
-export const ARENA_BOUND = 18;      // soft bound for player movement
+export const ARENA_BOUND = 25;      // allows venturing outside through entrances (walls at ±20)
 
 // Pillar dimensions
 export const PILLAR_HEIGHT = 4;

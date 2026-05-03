@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { yawToDir, assertFiniteVec3, prettyVec } from './coords';
 import type { Collider, CylinderCollider, BoxCollider } from './arena';
+import { ARENA_BOUND } from './shared/physics';
 
 export interface PlayerConfig {
   moveSpeed: number;
@@ -172,9 +173,8 @@ export class PlayerController {
     }
 
     // Keep in arena bounds
-    const bound = 18;
-    this.position.x = Math.max(-bound, Math.min(bound, this.position.x));
-    this.position.z = Math.max(-bound, Math.min(bound, this.position.z));
+    this.position.x = Math.max(-ARENA_BOUND, Math.min(ARENA_BOUND, this.position.x));
+    this.position.z = Math.max(-ARENA_BOUND, Math.min(ARENA_BOUND, this.position.z));
 
     // Update mesh position if attached
     if (this.mesh) {

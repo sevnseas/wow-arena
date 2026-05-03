@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { CooldownManager, DebuffManager, CastSystem, ProjectileSystem } from './systems';
+import { ARENA_BOUND } from './shared/physics';
 
 // ============================================================================
 // Types
@@ -123,9 +124,8 @@ const mageAbilities: AbilityDef[] = [
       newPos.y = 0;
 
       // Clamp to arena bounds
-      const bound = 18;
-      newPos.x = Math.max(-bound, Math.min(bound, newPos.x));
-      newPos.z = Math.max(-bound, Math.min(bound, newPos.z));
+      newPos.x = Math.max(-ARENA_BOUND, Math.min(ARENA_BOUND, newPos.x));
+      newPos.z = Math.max(-ARENA_BOUND, Math.min(ARENA_BOUND, newPos.z));
 
       ctx.setEntityPos(ctx.casterId, newPos);
       ctx.cooldowns.startCooldown('mage_blink', 15);

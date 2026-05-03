@@ -4,9 +4,8 @@
 
 import * as THREE from 'three';
 // @ts-ignore - JS texture modules
-import { createTexture as createGrassTexture } from './textures/grass.js';
-// @ts-ignore - JS texture modules
 import { createTexture as createCeramicTexture } from './textures/ceramic_gray.js';
+import { createTerrain, createWaterPlane } from './terrain';
 
 // Arena dimensions
 const ARENA_SIZE = 40;
@@ -38,15 +37,7 @@ export type Collider = CylinderCollider | BoxCollider;
 const colliders: Collider[] = [];
 
 // Cached textures
-let grassTexture: THREE.CanvasTexture | undefined;
 let ceramicTexture: THREE.CanvasTexture | undefined;
-
-function getGrassTexture(): THREE.CanvasTexture {
-  if (grassTexture) return grassTexture;
-  grassTexture = createGrassTexture(THREE, 256, 12345) as THREE.CanvasTexture;
-  grassTexture.repeat.set(10, 10);
-  return grassTexture;
-}
 
 function getCeramicTexture(): THREE.CanvasTexture {
   if (ceramicTexture) return ceramicTexture;
@@ -55,22 +46,6 @@ function getCeramicTexture(): THREE.CanvasTexture {
   return ceramicTexture;
 }
 
-/**
- * Create the arena ground plane
- */
-function createGround(): THREE.Mesh {
-  const geometry = new THREE.PlaneGeometry(ARENA_SIZE, ARENA_SIZE);
-  const material = new THREE.MeshStandardMaterial({
-    map: getGrassTexture(),
-    roughness: 0.9,
-    metalness: 0.1
-  });
-  const ground = new THREE.Mesh(geometry, material);
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  ground.name = 'Ground';
-  return ground;
-}
 
 /**
  * Create a pillar at the given position
@@ -150,7 +125,8 @@ function createRamp(
 }
 
 /**
- * Create the arena boundary walls (low walls)
+ * Create individual boundary wall segments with entrance gaps
+ * Each wall is split into left and right segments with a centered entrance
  */
 function createBoundaryWalls(): THREE.Group {
   const walls = new THREE.Group();
@@ -159,6 +135,7 @@ function createBoundaryWalls(): THREE.Group {
   const wallHeight = 1.5;
   const wallThickness = 0.5;
   const halfSize = ARENA_SIZE / 2;
+  const entranceWidth = 6; // Width of the gap for each entrance
 
   const wallMaterial = new THREE.MeshStandardMaterial({
     color: 0x555555,
@@ -166,21 +143,53 @@ function createBoundaryWalls(): THREE.Group {
     metalness: 0.2
   });
 
-  // Create 4 walls
-  const createWall = (length: number, x: number, z: number, rotY: number) => {
+  // Create wall segment and register collider
+  const createWallSegment = (
+    length: number,
+    x: number,
+    z: number,
+    rotY: number
+  ) => {
     const geometry = new THREE.BoxGeometry(length, wallHeight, wallThickness);
     const wall = new THREE.Mesh(geometry, wallMaterial);
     wall.position.set(x, wallHeight / 2, z);
     wall.rotation.y = rotY;
     wall.castShadow = true;
     wall.receiveShadow = true;
+    walls.add(wall);
+
+    // Register as collider
+    colliders.push({
+      type: 'box',
+      x,
+      z,
+      width: rotY === 0 ? length : wallThickness,
+      depth: rotY === 0 ? wallThickness : length,
+      height: wallHeight,
+      rotation: rotY
+    });
+
     return wall;
   };
 
-  walls.add(createWall(ARENA_SIZE, 0, -halfSize, 0));           // North
-  walls.add(createWall(ARENA_SIZE, 0, halfSize, 0));            // South
-  walls.add(createWall(ARENA_SIZE, -halfSize, 0, Math.PI / 2)); // West
-  walls.add(createWall(ARENA_SIZE, halfSize, 0, Math.PI / 2));  // East
+  const halfSegmentLength = (ARENA_SIZE - entranceWidth) / 2;
+  const offset = halfSegmentLength / 2 + entranceWidth / 2;
+
+  // North wall (z = -halfSize) - split left and right
+  createWallSegment(halfSegmentLength, -offset, -halfSize, 0);
+  createWallSegment(halfSegmentLength, offset, -halfSize, 0);
+
+  // South wall (z = halfSize) - split left and right
+  createWallSegment(halfSegmentLength, -offset, halfSize, 0);
+  createWallSegment(halfSegmentLength, offset, halfSize, 0);
+
+  // West wall (x = -halfSize) - split top and bottom
+  createWallSegment(halfSegmentLength, -halfSize, -offset, Math.PI / 2);
+  createWallSegment(halfSegmentLength, -halfSize, offset, Math.PI / 2);
+
+  // East wall (x = halfSize) - split top and bottom
+  createWallSegment(halfSegmentLength, halfSize, -offset, Math.PI / 2);
+  createWallSegment(halfSegmentLength, halfSize, offset, Math.PI / 2);
 
   return walls;
 }
@@ -202,8 +211,12 @@ export function createArena(): THREE.Group {
   const arena = new THREE.Group();
   arena.name = 'Arena';
 
-  // Ground
-  arena.add(createGround());
+  // Terrain (replaces flat ground plane)
+  const { mesh: terrain } = createTerrain();
+  arena.add(terrain);
+
+  // Water plane
+  arena.add(createWaterPlane());
 
   // 4 main pillars in cardinal positions (Nagrand-style)
   const pillarOffset = 8;
