@@ -6,8 +6,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-const TREE_GLB_URL = 'https://douges.dev/static/tree.glb';
-const FOLIAGE_ALPHA_URL = 'https://douges.dev/static/foliage_alpha3.png';
+const BASE = (import.meta as any).env?.BASE_URL ?? '/';
+const TREE_GLB_URL = `${BASE}trees/tree.glb`;
+const FOLIAGE_ALPHA_URL = `${BASE}trees/foliage_alpha3.png`;
 
 interface FoliageUniforms {
   u_effectBlend: { value: number };
@@ -106,14 +107,18 @@ function createFoliageMaterial(alphaMap: THREE.Texture): THREE.MeshStandardMater
     shader.vertexShader = shader.vertexShader.replace(
       '#include <project_vertex>',
       /* glsl */ `
+      vec4 mvPosition = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        mvPosition = instanceMatrix * mvPosition;
+      #endif
+      mvPosition = modelViewMatrix * mvPosition;
+
       vec2 vertexOffset = calcInitialOffsetFromUVs();
       vec3 inflatedVertexOffset = inflateOffset(vec3(vertexOffset, 0.0));
+      mvPosition += vec4(mix(vec3(0.0), inflatedVertexOffset, u_effectBlend), 0.0);
+      mvPosition = applyWind(mvPosition);
 
-      vec4 worldViewPosition = modelViewMatrix * vec4(transformed, 1.0);
-      worldViewPosition += vec4(mix(vec3(0.0), inflatedVertexOffset, u_effectBlend), 0.0);
-      worldViewPosition = applyWind(worldViewPosition);
-
-      gl_Position = projectionMatrix * worldViewPosition;
+      gl_Position = projectionMatrix * mvPosition;
       `
     );
   };
@@ -122,8 +127,8 @@ function createFoliageMaterial(alphaMap: THREE.Texture): THREE.MeshStandardMater
 }
 
 interface TreeAssets {
-  trunkGeometry: THREE.BufferGeometry;
-  foliageGeometry: THREE.BufferGeometry;
+  trunkMesh: THREE.Mesh;
+  foliageMesh: THREE.Mesh;
   foliageMaterial: THREE.MeshStandardMaterial;
   trunkMaterial: THREE.MeshBasicMaterial;
 }
@@ -149,16 +154,17 @@ function loadTreeAssets(): Promise<TreeAssets> {
     alphaMap.wrapS = THREE.ClampToEdgeWrapping;
     alphaMap.wrapT = THREE.ClampToEdgeWrapping;
 
-    let trunkGeometry: THREE.BufferGeometry | null = null;
-    let foliageGeometry: THREE.BufferGeometry | null = null;
+    let trunkMesh: THREE.Mesh | null = null;
+    let foliageMesh: THREE.Mesh | null = null;
+    scene.updateMatrixWorld(true);
     scene.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) {
         const mesh = obj as THREE.Mesh;
-        if (mesh.name === 'trunk') trunkGeometry = mesh.geometry;
-        else if (mesh.name === 'foliage') foliageGeometry = mesh.geometry;
+        if (mesh.name === 'trunk') trunkMesh = mesh;
+        else if (mesh.name === 'foliage') foliageMesh = mesh;
       }
     });
-    if (!trunkGeometry || !foliageGeometry) {
+    if (!trunkMesh || !foliageMesh) {
       throw new Error('tree.glb missing expected "trunk" or "foliage" mesh');
     }
 
@@ -167,7 +173,7 @@ function loadTreeAssets(): Promise<TreeAssets> {
 
     startWindTicker();
 
-    return { trunkGeometry, foliageGeometry, foliageMaterial, trunkMaterial };
+    return { trunkMesh, foliageMesh, foliageMaterial, trunkMaterial };
   });
 
   return assetsPromise;
@@ -177,12 +183,18 @@ function buildTreeMesh(assets: TreeAssets, scale: number): THREE.Group {
   const tree = new THREE.Group();
   tree.name = 'Tree';
 
-  const trunk = new THREE.Mesh(assets.trunkGeometry, assets.trunkMaterial);
+  const trunk = new THREE.Mesh(assets.trunkMesh.geometry, assets.trunkMaterial);
+  trunk.position.copy(assets.trunkMesh.position);
+  trunk.quaternion.copy(assets.trunkMesh.quaternion);
+  trunk.scale.copy(assets.trunkMesh.scale);
   trunk.castShadow = true;
   trunk.receiveShadow = true;
   tree.add(trunk);
 
-  const foliage = new THREE.Mesh(assets.foliageGeometry, assets.foliageMaterial);
+  const foliage = new THREE.Mesh(assets.foliageMesh.geometry, assets.foliageMaterial);
+  foliage.position.copy(assets.foliageMesh.position);
+  foliage.quaternion.copy(assets.foliageMesh.quaternion);
+  foliage.scale.copy(assets.foliageMesh.scale);
   foliage.castShadow = true;
   foliage.receiveShadow = true;
   tree.add(foliage);
