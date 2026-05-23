@@ -81,7 +81,7 @@ export const DEFAULT_DRIVER4_CONFIG: PolicyDriver4Config = {
 const ACTION_NAMES = [
   'MoveFwd', 'MoveBack', 'StrafeL', 'StrafeR',
   'FwdL', 'FwdR', 'BackL', 'BackR',
-  'Ability1', 'Ability2', 'Ability3',
+  'Ability1', 'Ability2', 'Ability3', 'Interact',
 ];
 
 export interface AgentDecision4 {

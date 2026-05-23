@@ -65,6 +65,10 @@ export interface EntityInit {
   personalityBias?: Float32Array;
   /** Higher temperature → more stochastic / erratic action sampling. */
   temperature?: number;
+  // Optional ecosystem params — sensible defaults below if omitted so
+  // existing tests/training that don't care about lifespan still work.
+  maxAge?: number;
+  starveRate?: number;
 }
 
 export interface Entity {
@@ -104,6 +108,19 @@ export interface Entity {
   /** Stat-tracking for trainer / reward shaping. */
   healedThisDecision: number;
   killsThisEpisode: number;
+  // ---- ecosystem (see ecosystem.md) ----
+  /** Simulated seconds lived. */
+  age: number;
+  /** Maximum lifespan in seconds; dies of natural causes when `age > maxAge`. */
+  maxAge: number;
+  /** HP drained per second between meals — keeps grazers/predators on a
+   *  clock. Eating offsets the drain. */
+  starveRate: number;
+  /** Grass nutrition (0..1 units) consumed since last reproduction. Rabbits
+   *  need >= 3 to trigger Interact-reproduction. */
+  grassEaten: number;
+  /** Number of prey killed since last reproduction (wolves/predators). */
+  preyEaten: number;
 }
 
 export interface EnvConfig {
@@ -191,8 +208,11 @@ export const enum Action {
   Ability2 = 9,
   /** Ability 3 */
   Ability3 = 10,
+  /** Short-range "interact" — reproduces with nearby same-team entity if
+   *  the archetype-specific resource counter is full. See ecosystem.md. */
+  Interact = 11,
 }
-export const ACTION_COUNT = 11;
+export const ACTION_COUNT = 12;
 
 /** Maximum entities observable in minimap state (padding for variable counts). */
 export const MAX_ENTITIES_RL4 = 20;

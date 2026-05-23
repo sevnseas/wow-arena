@@ -7,10 +7,11 @@ import { Policy4, reinforceUpdate4, type Step4 } from '../rl/policy4';
 import { createEnv4, spawn4, observe4, act4, step4, computeReward4 } from '../rl/env4';
 
 describe('RL4 Direct Control', () => {
-  it('Action enum has 11 discrete actions', () => {
-    expect(ACTION_COUNT).toBe(11);
+  it('Action enum has 12 discrete actions (8 move + 3 abilities + Interact)', () => {
+    expect(ACTION_COUNT).toBe(12);
     expect(Action.MoveForward).toBe(0);
     expect(Action.Ability3).toBe(10);
+    expect(Action.Interact).toBe(11);
   });
 
   it('Observation space is correct size', () => {

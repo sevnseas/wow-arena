@@ -13,6 +13,24 @@ import {
   type Entity, type EntityInit, type EnvConfig, type Archetype,
 } from './types';
 
+/** Static grass patch (ecosystem). Rabbits absorb nutrition by walking on it.
+ *  Depleted patches regrow at `grassRegrow` per second. See ecosystem.md. */
+export interface Grass {
+  id: number;
+  x: number;
+  z: number;
+  /** 0..1 — fraction of full nutrition currently available. */
+  nutrition: number;
+}
+
+/** Ecosystem events surfaced for metrics + reward shaping. Stored alongside
+ *  the existing env.events (damage/kill) but kept on env4 itself so the
+ *  legacy RLEnv interface doesn't need to change. */
+export type EcosystemEvent =
+  | { type: 'grazed'; entityId: number; amount: number }
+  | { type: 'born';   parentAId: number; parentBId: number; childId: number; archetype: Archetype }
+  | { type: 'died';   entityId: number; cause: 'age' | 'starvation' | 'predator' };
+
 /** Convert action to velocity direction. */
 function actionToVelocity(action: number, speed: number): { vx: number; vz: number } {
   const v = speed;
@@ -44,10 +62,47 @@ function archetypeToCode(arch: Archetype): number {
 export interface RLEnv4 {
   env: RLEnv;
   entities: Array<Entity & { rewardThisEpisode: number; lastHp: number }>;
+  /** Grass patches present in this env. Empty for non-ecosystem scenarios. */
+  grass: Grass[];
+  /** Ecosystem-level events accumulated since last `clearEcosystemEvents`. */
+  events: EcosystemEvent[];
+  /** Counter for unique grass ids (since they're spawned dynamically). */
+  nextGrassId: number;
+  /** Counter for unique entity ids when spawning newborns mid-episode. */
+  config: { grazeRate: number; grassRegrow: number; grassRadius: number; interactRange: number; reproThreshold: { rabbit: number; wolf: number } };
 }
 
+/** Default ecosystem knobs — kept on env4 (not EnvConfig) so legacy RL3
+ *  code doesn't have to change. */
+export const ECO_DEFAULTS = {
+  /** Nutrition units transferred per second when standing on a patch. */
+  grazeRate: 1.5,
+  /** Patch nutrition regrowth per second (capped at 1.0). */
+  grassRegrow: 0.05,
+  /** Patch contact radius for grazing. */
+  grassRadius: 0.6,
+  /** Range within which Interact can find a reproduction partner. */
+  interactRange: 1.2,
+  /** Per-archetype counter thresholds that gate reproduction. */
+  reproThreshold: { rabbit: 3, wolf: 1 },
+};
+
 export function createEnv4(config: Partial<EnvConfig> = {}, seed = 1): RLEnv4 {
-  return { env: new RLEnv(config, seed), entities: [] };
+  return {
+    env: new RLEnv(config, seed),
+    entities: [],
+    grass: [],
+    events: [],
+    nextGrassId: 0,
+    config: { ...ECO_DEFAULTS },
+  };
+}
+
+/** Add a grass patch at (x, z) with full nutrition. */
+export function spawnGrass(env4: RLEnv4, x: number, z: number): Grass {
+  const g: Grass = { id: env4.nextGrassId++, x, z, nutrition: 1 };
+  env4.grass.push(g);
+  return g;
 }
 
 /** Spawn an entity for training. */
@@ -113,21 +168,78 @@ export function observe4(env4: RLEnv4, e: Entity): Float32Array {
   return state;
 }
 
-/** Execute one action (movement + ability placeholder). */
-export function act4(_env4: RLEnv4, e: Entity, action: number, _dt: number): void {
-  // Convert action to velocity.
+/** Execute one action (movement + ability + ecosystem Interact). */
+export function act4(env4: RLEnv4, e: Entity, action: number, _dt: number): void {
   const { vx, vz } = actionToVelocity(action, e.speed);
   e.vx = vx;
   e.vz = vz;
 
-  // Ability actions (8-10) would execute combat abilities here.
-  // For now, just movement.
-  if (action === Action.Ability1 || action === Action.Ability2 || action === Action.Ability3) {
-    // TODO: Implement ability execution (cooldowns, damage, ranges).
+  if (action === Action.Interact) {
+    // Reproduction: requires (a) the per-archetype counter is met and (b) a
+    // live same-team partner is within interactRange. Pure adjacency check —
+    // no search problem for the policy.
+    tryReproduce(env4, e);
   }
+  // Ability1-3 are policy slots that the live game wires to abilities, but
+  // env4 itself doesn't model abilities yet (combat is collision-driven).
 }
 
-/** Apply physics step (collision, damage, etc.). */
+/** Spawn a newborn at the midpoint of two parents iff counter + adjacency
+ *  predicates pass. Resets both parents' counter on success. Emits `born`. */
+function tryReproduce(env4: RLEnv4, e: Entity): boolean {
+  const threshold = e.archetype === 'rabbit'
+    ? env4.config.reproThreshold.rabbit
+    : (e.archetype === 'wolf' || e.archetype === 'cat' || e.archetype === 'dog' || e.archetype === 'werewolf')
+      ? env4.config.reproThreshold.wolf
+      : Infinity;
+  const counter = e.archetype === 'rabbit' ? e.grassEaten : e.preyEaten;
+  if (counter < threshold) return false;
+
+  const range = env4.config.interactRange;
+  let mate: Entity | null = null;
+  let bestD2 = range * range;
+  for (const o of env4.env.entities) {
+    if (!o.alive || o.id === e.id) continue;
+    if (o.archetype !== e.archetype) continue; // same species only
+    const d2 = (o.x - e.x) * (o.x - e.x) + (o.z - e.z) * (o.z - e.z);
+    if (d2 < bestD2) { bestD2 = d2; mate = o; }
+  }
+  if (!mate) return false;
+
+  // Spawn newborn at midpoint, full HP, age 0, inherits parents' params.
+  const child = env4.env.spawn({
+    archetype: e.archetype,
+    team: e.team,
+    x: (e.x + mate.x) / 2,
+    z: (e.z + mate.z) / 2,
+    hp: e.maxHp,
+    maxHp: e.maxHp,
+    size: e.size,
+    speed: e.speed,
+    attackCooldown: e.attackCooldown,
+    maxAge: e.maxAge,
+    starveRate: e.starveRate,
+  });
+  // RLEnv4 tracks `entities` separately with reward bookkeeping fields.
+  (child as Entity & { rewardThisEpisode: number; lastHp: number }).rewardThisEpisode = 0;
+  (child as Entity & { rewardThisEpisode: number; lastHp: number }).lastHp = child.hp;
+  env4.entities.push(child as Entity & { rewardThisEpisode: number; lastHp: number });
+
+  // Reset both parents' counters.
+  if (e.archetype === 'rabbit') {
+    e.grassEaten = 0; mate.grassEaten = 0;
+  } else {
+    e.preyEaten = 0; mate.preyEaten = 0;
+  }
+
+  env4.events.push({
+    type: 'born', parentAId: e.id, parentBId: mate.id, childId: child.id,
+    archetype: e.archetype,
+  });
+  return true;
+}
+
+/** Apply physics step (collision, damage, grazing, ageing, starvation). */
 export function step4(env4: RLEnv4, dt: number): void {
   const env = env4.env;
 
@@ -142,7 +254,8 @@ export function step4(env4: RLEnv4, dt: number): void {
     if (e.z > env.config.bounds) e.z = env.config.bounds;
   }
 
-  // Simple collision: if two entities are close, they damage each other.
+  // Combat collision: enemies in contact attack. Predator kills track
+  // `preyEaten` for reproduction; deaths get a `predator` cause event.
   for (let i = 0; i < env4.entities.length; i++) {
     const a = env4.entities[i];
     if (!a.alive) continue;
@@ -154,12 +267,51 @@ export function step4(env4: RLEnv4, dt: number): void {
       const d = Math.hypot(dx, dz);
       const contactRange = a.size + b.size + env.config.contactBuffer;
       if (d < contactRange && a.team !== b.team) {
-        // a attacks b if cooldown is ready.
         if (a.attackTimer <= 0) {
+          const targetWasAlive = b.alive;
           env.damage(a, b);
           a.attackTimer = a.attackCooldown;
+          if (targetWasAlive && !b.alive) {
+            // Predator credit + death event for ecosystem metrics.
+            a.preyEaten += 1;
+            env4.events.push({ type: 'died', entityId: b.id, cause: 'predator' });
+          }
         }
       }
+    }
+  }
+
+  // Grass regrowth + grazing pass.
+  const { grassRadius, grassRegrow, grazeRate } = env4.config;
+  for (const g of env4.grass) {
+    if (g.nutrition < 1) g.nutrition = Math.min(1, g.nutrition + grassRegrow * dt);
+  }
+  for (const e of env4.entities) {
+    if (!e.alive || e.archetype !== 'rabbit') continue;
+    for (const g of env4.grass) {
+      if (g.nutrition <= 0) continue;
+      const dx = g.x - e.x, dz = g.z - e.z;
+      if (dx * dx + dz * dz > grassRadius * grassRadius) continue;
+      const take = Math.min(g.nutrition, grazeRate * dt);
+      g.nutrition -= take;
+      e.grassEaten += take;
+      e.hp = Math.min(e.maxHp, e.hp + take * 8); // grazing also heals
+      env4.events.push({ type: 'grazed', entityId: e.id, amount: take });
+    }
+  }
+
+  // Age + starvation. Death events are emitted exactly once per entity:
+  // either `age` or `starvation` (predator deaths are above).
+  for (const e of env4.entities) {
+    if (!e.alive) continue;
+    e.age += dt;
+    if (e.starveRate > 0) e.hp -= e.starveRate * dt;
+    if (e.age > e.maxAge) {
+      e.alive = false;
+      env4.events.push({ type: 'died', entityId: e.id, cause: 'age' });
+    } else if (e.hp <= 0) {
+      e.alive = false;
+      env4.events.push({ type: 'died', entityId: e.id, cause: 'starvation' });
     }
   }
 
@@ -168,6 +320,12 @@ export function step4(env4: RLEnv4, dt: number): void {
   for (const e of env4.entities) {
     if (e.attackTimer > 0) e.attackTimer -= dt;
   }
+}
+
+/** Clear accumulated ecosystem events. Call between reward computation
+ *  windows so events aren't double-counted. */
+export function clearEcosystemEvents(env4: RLEnv4): void {
+  env4.events.length = 0;
 }
 
 /** Compute per-entity reward this decision interval. */

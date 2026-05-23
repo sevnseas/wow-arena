@@ -111,6 +111,13 @@ export class RLEnv {
       hidden: false,
       healedThisDecision: 0,
       killsThisEpisode: 0,
+      // Ecosystem defaults — long lifespan + no starvation unless the caller
+      // passes ecosystem-specific values. Keeps legacy tests/training unaffected.
+      age: 0,
+      maxAge: init.maxAge ?? 9999,
+      starveRate: init.starveRate ?? 0,
+      grassEaten: 0,
+      preyEaten: 0,
     };
     this.entities.push(e);
     return e;
