@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "train": "tsx scripts/train-rl.mjs",
     "train:rl4": "tsx scripts/train-rl4.mjs",
+    "train:ecosystem": "tsx scripts/train-rl4-ecosystem.mjs",
     "scenario": "tsx scripts/scenario-tick.mjs"
   },
   "dependencies": {
