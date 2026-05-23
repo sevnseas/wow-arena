@@ -992,6 +992,22 @@ async function init(): Promise<GameState> {
     [state.dogs, state.rabbits, state.cats, state.cows],
     new THREE.Vector3(14, 0, -14),
   );
+  // Werewolf needs a live player reference so it can aggro on proximity
+  // and on hit (boss never ignores a human swinging a sword at it).
+  state.mutantPredator.setPlayerProvider(() => {
+    const playerEntity = state.entityRegistry.get('player');
+    if (!playerEntity || !playerEntity.alive) return null;
+    return {
+      id: playerEntity.id,
+      pos: playerEntity.pos,
+      alive: playerEntity.alive,
+      hp: playerEntity.hp,
+      maxHp: playerEntity.maxHp,
+      radius: playerEntity.radius,
+      damage: (amount: number, attacker?: any) => playerEntity.damage(amount, attacker),
+      heal: (amount: number) => playerEntity.heal(amount),
+    } as any;
+  });
   state.livingProviders = [state.dogs, state.rabbits, state.cats, state.cows, state.wolves, state.mutantPredator];
   for (const provider of state.livingProviders) {
     provider.forEachPrey((ref) => { ref.mesh.userData.damageSplats = state.damageSplats; });

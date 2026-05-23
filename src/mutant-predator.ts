@@ -10,6 +10,7 @@ import {
   healPreyState,
   maintainCombatSpacing,
   makePreyState,
+  notePreyAttacker,
   type CombatTargetRef,
   type PreyProvider,
   type PreyRef,
@@ -25,6 +26,12 @@ const SCENT_RADIUS = 22;
 const ATTACK_DAMAGE = 14;
 const ATTACK_COOLDOWN = 1.7;
 const PROWL_RADIUS = 7;
+/** Player gets close → instant aggro. */
+const PLAYER_AGGRO_RADIUS = 7;
+/** After being damaged, hold aggro for this many seconds even at range. */
+const PLAYER_HIT_AGGRO_LINGER = 12;
+/** Lose interest if player gets this far. */
+const PLAYER_DEAGGRO_RADIUS = 30;
 
 type MutantState = 'prowl' | 'hunt' | 'attack';
 
@@ -83,6 +90,17 @@ export class MutantPredator implements PreyProvider {
     this.colliders = colliders;
   }
 
+  private playerProvider: (() => CombatTargetRef | null) | null = null;
+  /** Wire the boss to a live player reference so it can aggro on proximity
+   *  AND so attack-aggro retention works through the brain layer. */
+  setPlayerProvider(fn: () => CombatTargetRef | null): void {
+    this.playerProvider = fn;
+  }
+
+  private getPlayerRef(): CombatTargetRef | null {
+    return this.playerProvider?.() ?? null;
+  }
+
   /**
    * Brain-driven adapter for the werewolf boss. The trained policy chooses
    * Attack to lock onto a focus, Idle to drop combat (rare), or Flee to
@@ -107,6 +125,10 @@ export class MutantPredator implements PreyProvider {
       get attackerId() { return self.preyState.lastAttackerId; },
       applyIntent(intent, focus, _ctx) {
         if (self.preyState.dead) return;
+        // Boss is locked on the player — ignore brain re-targets. The brain
+        // doesn't observe the player so it would just point us back at a
+        // rabbit, which would be silly when there's a human shooting at us.
+        if (self.playerLocked) return;
         if (intent === Intent.Attack && focus) {
           const ref = self.resolveTargetByPos(focus.id, focus.pos.x, focus.pos.z);
           if (ref) {
@@ -130,6 +152,11 @@ export class MutantPredator implements PreyProvider {
       },
     }];
   }
+
+  /** Set by update() when the player is in aggro range; prevents the brain
+   *  from re-pointing prey at some other entity while the boss is locked on
+   *  the player. */
+  private playerLocked = false;
 
   private personalityBias: Float32Array = (() => {
     const b = new Float32Array(INTENT_COUNT);
@@ -160,6 +187,32 @@ export class MutantPredator implements PreyProvider {
 
     this.attackTimer = Math.max(0, this.attackTimer - delta);
     if (!this.prey?.alive) this.prey = null;
+
+    // Player aggro: proximity OR recent damage. Locks the boss onto the
+    // player until they die or escape past PLAYER_DEAGGRO_RADIUS. This
+    // overrides whatever the brain picked — a boss never ignores a hostile
+    // human standing in its face.
+    const player = this.getPlayerRef();
+    if (player?.alive) {
+      const dx = player.pos.x - this.pos.x;
+      const dz = player.pos.z - this.pos.z;
+      const dist = Math.hypot(dx, dz);
+      const hitByPlayerRecently =
+        this.preyState.lastAttackerId === player.id &&
+        (performance.now() - this.preyState.lastHitAt) < PLAYER_HIT_AGGRO_LINGER * 1000;
+      const playerIsCurrentPrey = this.prey?.id === player.id;
+      const tooClose = dist < PLAYER_AGGRO_RADIUS;
+      const stillEngaged = playerIsCurrentPrey && dist < PLAYER_DEAGGRO_RADIUS;
+      if (tooClose || hitByPlayerRecently || stillEngaged) {
+        this.prey = player;
+        this.state = 'hunt';
+        this.playerLocked = dist < PLAYER_DEAGGRO_RADIUS;
+      } else if (playerIsCurrentPrey && dist >= PLAYER_DEAGGRO_RADIUS) {
+        // Escaped — drop aggro and let the brain pick again next decision.
+        this.prey = null;
+        this.playerLocked = false;
+      }
+    }
 
     if (!this.prey) {
       this.prey = this.findNearestHuntTarget(this.pos, SCENT_RADIUS);
@@ -257,8 +310,12 @@ export class MutantPredator implements PreyProvider {
         if (this.preyState.dead) return false;
         this.preyState.hp = Math.max(0, this.preyState.hp - amount);
         this.preyState.lastHitAt = performance.now();
+        notePreyAttacker(this.preyState, attacker);
         emitDamageSplat(this.view.root, amount);
         if (attacker?.alive) {
+          // Hard-aggro the attacker — applies whether it's the player or
+          // another animal. Player aggro is additionally protected against
+          // brain re-targeting in applyIntent via `playerLocked`.
           this.prey = attacker;
           this.state = 'hunt';
         }
