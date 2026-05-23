@@ -4,7 +4,6 @@ import {
   type Archetype,
 } from '../rl/types';
 import { Policy4, reinforceUpdate4, type Step4 } from '../rl/policy4';
-import { Rng } from '../rl/rng';
 import { createEnv4, spawn4, observe4, act4, step4, computeReward4 } from '../rl/env4';
 
 describe('RL4 Direct Control', () => {
@@ -79,7 +78,7 @@ describe('RL4 Direct Control', () => {
       speed: 8,
       attackCooldown: 0.3,
     });
-    const enemy = spawn4(env4, {
+    spawn4(env4, {
       archetype: 'cat' as Archetype,
       team: 'prey',
       x: 5,
@@ -94,7 +93,6 @@ describe('RL4 Direct Control', () => {
     expect(state.length).toBe(STATE_DIM_RL4);
     // First entity should have non-zero position values
     const relX = state[0];
-    const relZ = state[1];
     expect(Math.abs(relX)).toBeGreaterThan(0.1); // Should be ~0.28 (5/18)
   });
 

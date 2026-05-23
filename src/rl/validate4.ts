@@ -8,7 +8,7 @@
  * - Coordinate (in multi-agent setups)
  */
 
-import { createEnv4, spawn4, observe4, act4, step4, computeReward4 } from './env4';
+import { createEnv4, spawn4, observe4, act4, step4 } from './env4';
 import { Policy4 } from './policy4';
 import type { Archetype } from './types';
 

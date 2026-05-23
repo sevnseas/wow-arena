@@ -7,7 +7,6 @@
 
 import * as THREE from 'three';
 import { Policy4, deserializePolicy4 } from './rl/policy4';
-import { createEnv4, observe4, act4 } from './rl/env4';
 import type { Archetype } from './rl/types';
 import { Action } from './rl/types';
 
@@ -26,7 +25,6 @@ export interface RL4ControlledEntity {
 export class RL4GameController {
   private entities: Map<string, RL4ControlledEntity> = new Map();
   private policies: Map<Archetype, Policy4> = new Map();
-  private env4 = createEnv4({}, 1); // Minimal env for observation generation
 
   constructor() {
     // Initialize with default policies (can be replaced with trained ones)

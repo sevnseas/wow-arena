@@ -4,8 +4,8 @@
  */
 
 import { train4 } from './train4';
-import { Policy4, serializePolicy4 } from './policy4';
-import type { Archetype, EnvConfig } from './types';
+import { serializePolicy4 } from './policy4';
+import type { Archetype } from './types';
 
 export interface TrainedPolicies {
   wolf: string;
