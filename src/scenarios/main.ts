@@ -13,7 +13,7 @@ import { CatColony } from '../cats';
 import { RabbitWarren } from '../rabbits';
 import { CowHerd } from '../cows';
 import {
-  loadPolicy4Registry, PolicyDriver4, ACTION_NAMES,
+  loadPolicy4Registry, PolicyDriver4, ACTION_NAMES, actionToUnitVec, isMovementAction,
   type PolicyAgent4Ref,
 } from '../rl/runtime4';
 import type { PreyProvider } from '../prey';
@@ -267,6 +267,18 @@ camera.lookAt(0, 0.5, 0);
 
 // ---- RL4 driver wiring ----
 let driver: PolicyDriver4 | null = null;
+interface PolicyMeta {
+  archetype: string;
+  trainedAt: string;
+  episodesPerStage: number;
+  bestEpisodeMA50: number;
+  bestStage: string;
+  bestEpisodeIndex: number;
+  killRatesByStage: Record<string, number>;
+  policyConfig: { hidden: number; lr: number; baselineEMA: number; entropyCoef: number };
+  historyLength: number;
+}
+const policyMeta: Record<string, PolicyMeta> = {};
 const baseUrl = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
 const policyRoot = `${baseUrl.replace(/\/$/, '')}/policies-rl4`;
 (async () => {
@@ -279,7 +291,76 @@ const policyRoot = `${baseUrl.replace(/\/$/, '')}/policies-rl4`;
   driver.setAgents([...world.brainAgents, ...world.observables]);
   const archs = Object.keys(reg.policies);
   logLine(`loaded RL4 policies for ${archs.join(', ')} · driver active`);
+  // Sidecar metadata — non-fatal if absent (older policies don't have it).
+  for (const a of archs) {
+    try {
+      const res = await fetch(`${policyRoot}/${a}.meta.json`);
+      if (res.ok) policyMeta[a] = await res.json();
+    } catch { /* meta is optional */ }
+  }
 })();
+
+// ---- Action arrow visualization ----
+// One arrow per brain-driven agent showing the policy's chosen move direction
+// (world frame, matches actionToUnitVec). Length = action confidence; color
+// shifts from grey (uniform) → cyan (decisive). Abilities pulse the marker
+// instead of pointing. This is the smoking gun for "is the policy actually
+// homing on the target?" — by eye, you should see the arrow point at the prey.
+const arrowGroup = new THREE.Group();
+arrowGroup.name = 'ActionArrows';
+scene.add(arrowGroup);
+
+interface AgentMarker {
+  agentId: string;
+  arrow: THREE.ArrowHelper;
+  abilityPulse: THREE.Mesh;
+}
+const agentMarkers: AgentMarker[] = [];
+for (const a of world.brainAgents) {
+  const arrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0),
+    2.0, 0x66e0ff, 0.5, 0.3,
+  );
+  arrowGroup.add(arrow);
+  const pulse = new THREE.Mesh(
+    new THREE.RingGeometry(0.8, 1.0, 24),
+    new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0 }),
+  );
+  pulse.rotation.x = -Math.PI / 2;
+  arrowGroup.add(pulse);
+  agentMarkers.push({ agentId: a.id, arrow, abilityPulse: pulse });
+}
+
+function updateActionArrows(): void {
+  for (const m of agentMarkers) {
+    const agent = world.brainAgents.find(a => a.id === m.agentId);
+    if (!agent || !agent.alive) {
+      m.arrow.visible = false; m.abilityPulse.visible = false; continue;
+    }
+    m.arrow.visible = true;
+    const dec = driver?.getDecision(m.agentId);
+    const origin = new THREE.Vector3(agent.pos.x, 1.2, agent.pos.z);
+    if (dec && isMovementAction(dec.action)) {
+      const v = actionToUnitVec(dec.action);
+      m.arrow.position.copy(origin);
+      m.arrow.setDirection(new THREE.Vector3(v.x, 0, v.z));
+      const confidence = dec.probs[dec.action]; // 0..1
+      const len = 1.0 + confidence * 2.5;
+      m.arrow.setLength(len, Math.min(0.6, len * 0.25), Math.min(0.35, len * 0.15));
+      // Color: lerp grey → cyan with confidence.
+      const c = new THREE.Color(0x666666).lerp(new THREE.Color(0x66e0ff), confidence);
+      (m.arrow.line.material as THREE.LineBasicMaterial).color.copy(c);
+      (m.arrow.cone.material as THREE.MeshBasicMaterial).color.copy(c);
+      (m.abilityPulse.material as THREE.MeshBasicMaterial).opacity *= 0.85;
+    } else if (dec) {
+      // Ability action — pulse a ring under the agent.
+      m.arrow.position.copy(origin);
+      m.arrow.setLength(0.3, 0.15, 0.1);
+      m.abilityPulse.position.set(agent.pos.x, 0.05, agent.pos.z);
+      (m.abilityPulse.material as THREE.MeshBasicMaterial).opacity = 0.9;
+    }
+  }
+}
 
 // ---- Sim speed hotkeys ----
 window.addEventListener('keydown', (e) => {
@@ -300,14 +381,38 @@ function updateHud(): void {
         .sort((a, b) => b.p - a.p).slice(0, 3)
         .map(({ p, i }) => `${ACTION_NAMES[i]}:${(p * 100).toFixed(0)}%`).join(' ')
     : '—';
-  const trainHint = scen.half === 3 ? '~98% kill-rate (training distribution)'
-                   : scen.half === 6 ? '~60% kill-rate'
-                   : scen.half === 8 ? '~40-60% kill-rate'
-                   : scen.half === 12 ? '~15% kill-rate (out-of-distribution)'
-                   : '~3% kill-rate (open arena)';
+
+  // Policy provenance — pulled from the sidecar meta.json if present. The
+  // header colors trained vs untrained differently so it's obvious at a glance.
+  const meta = policyMeta[hero.archetype];
+  let provenance: string;
+  if (!driver) {
+    provenance = `<span style="color:#ff6">loading…</span>`;
+  } else if (!driver.hasPolicy(hero.archetype as any)) {
+    provenance = `<span style="color:#f88">NO POLICY for ${hero.archetype}</span>`;
+  } else if (!meta) {
+    provenance = `<span style="color:#fc6">trained (no meta.json — pre-curriculum run)</span>`;
+  } else {
+    const age = humanAge(meta.trainedAt);
+    provenance = `<span style="color:#9f9">trained ${age} · ${meta.episodesPerStage} eps × ${Object.keys(meta.killRatesByStage).length} stages</span>`;
+  }
+  const krRows = meta
+    ? Object.entries(meta.killRatesByStage).map(([k, v]) => {
+        const cur = (scen.half === 3 && k === 'pen3') || (scen.half === 6 && k === 'pen6')
+                 || (scen.half === 8 && k === 'pen6') || (scen.half === 12 && k === 'pen12');
+        const w = Math.round((v as number) * 14);
+        const bar = '█'.repeat(w) + '·'.repeat(14 - w);
+        const color = cur ? '#9af0c0' : '#888';
+        return `<div style="color:${color};font-size:10px">${k.padEnd(6)} ${bar} ${((v as number) * 100).toFixed(0).padStart(3)}%${cur ? ' ← this pen' : ''}</div>`;
+      }).join('')
+    : '';
+
   hud.innerHTML = `
     <h1>${scen.name}</h1>
-    <div class="row"><span class="lbl">expect</span><span class="val" style="color:#9af0c0">${trainHint}</span></div>
+    <div class="row"><span class="lbl">policy</span><span class="val">${provenance}</span></div>
+    ${meta ? `<div class="row"><span class="lbl">trained</span><span class="val" style="font-size:10px">best ma50 ${meta.bestEpisodeMA50.toFixed(0)} @${meta.bestStage}/ep${meta.bestEpisodeIndex} · hidden=${meta.policyConfig.hidden} lr=${meta.policyConfig.lr}</span></div>` : ''}
+    ${krRows ? `<div style="margin:4px 0 6px 0;font-family:monospace">${krRows}</div>` : ''}
+    <hr style="border:0;border-top:1px solid #333;margin:6px 0">
     <div class="row"><span class="lbl">hero</span><span class="val">${hero.archetype} · ${hero.hp.toFixed(0)}/${hero.maxHp.toFixed(0)} hp</span></div>
     <div class="row"><span class="lbl">action</span><span class="val">${act}</span></div>
     <div class="row"><span class="lbl">top 3</span><span class="val">${probs}</span></div>
@@ -316,6 +421,14 @@ function updateHud(): void {
     <div class="row"><span class="lbl">sim×</span><span class="val">${simSpeed.toFixed(2)}</span></div>
     <div class="row"><span class="lbl">kills</span><span class="val">${kills}</span></div>
   `;
+}
+
+function humanAge(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`;
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
 // ---- Main loop ----
@@ -332,6 +445,7 @@ function frame() {
 
   if (driver) driver.update(dt);
   world.tick(dt);
+  updateActionArrows();
 
   // Log significant events.
   const target = world.observables[0];

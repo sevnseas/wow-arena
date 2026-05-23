@@ -89,11 +89,37 @@ for (const archKey of archs) {
   console.log(`\n  wrote ${outFile}`);
   console.log(`  wrote ${csvFile} (${fullHistory.length} rows)`);
   console.log(`\n  final verification (60 trials each, on best policy):`);
+  const killRates = {};
   for (const s of STAGES) {
     const kr = killRate(bestPolicy, target, s, 60);
+    killRates[s.label] = kr;
     const bar = '█'.repeat(Math.round(kr * 30));
     console.log(`    ${s.label.padEnd(8)} ${(kr * 100).toFixed(0).padStart(3)}%  ${bar}`);
   }
+
+  // Sidecar metadata so the browser HUD can show "this is the trained
+  // policy, here's how well it scores, here's when it was made".
+  const meta = {
+    archetype: archKey,
+    trainedAt: new Date().toISOString(),
+    episodesPerStage: epsPerStage,
+    stages: STAGES.map(s => ({ ...s })),
+    bestEpisodeMA50: bestMA,
+    bestStage,
+    bestEpisodeIndex: bestEp,
+    killRatesByStage: killRates,
+    policyConfig: bestPolicy.cfg,
+    weightStats: {
+      W1: statsOf(bestPolicy.W1),
+      W2: statsOf(bestPolicy.W2),
+      b1: statsOf(bestPolicy.b1),
+      b2: statsOf(bestPolicy.b2),
+    },
+    historyLength: fullHistory.length,
+  };
+  const metaFile = resolve(outDir, `${archKey}.meta.json`);
+  writeFileSync(metaFile, JSON.stringify(meta, null, 2));
+  console.log(`  wrote ${metaFile}`);
   console.log(`\n  return ma50 over full curriculum:`);
   console.log(asciiPlot(fullMA, 70, 14));
 }
@@ -212,6 +238,16 @@ function killRate(policy, target, stage, trials = 40) {
     if (enemies.some(e => !e.alive)) kills++;
   }
   return kills / trials;
+}
+
+function statsOf(arr) {
+  let mn = Infinity, mx = -Infinity, sum = 0, sumsq = 0;
+  for (const v of arr) { if (v < mn) mn = v; if (v > mx) mx = v; sum += v; sumsq += v * v; }
+  const n = arr.length, mean = sum / n;
+  return {
+    n, mean, std: Math.sqrt(sumsq / n - mean * mean),
+    min: mn, max: mx,
+  };
 }
 
 function asciiPlot(values, width, height) {

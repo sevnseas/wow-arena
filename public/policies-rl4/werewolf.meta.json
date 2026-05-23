@@ -1,0 +1,77 @@
+{
+  "archetype": "werewolf",
+  "trainedAt": "2026-05-23T21:00:10.854Z",
+  "episodesPerStage": 600,
+  "stages": [
+    {
+      "label": "pen3",
+      "bounds": 3,
+      "spawnRadius": 2,
+      "visionRadius": 6
+    },
+    {
+      "label": "pen6",
+      "bounds": 6,
+      "spawnRadius": 4,
+      "visionRadius": 10
+    },
+    {
+      "label": "pen12",
+      "bounds": 12,
+      "spawnRadius": 8,
+      "visionRadius": 14
+    },
+    {
+      "label": "open",
+      "bounds": 25,
+      "spawnRadius": 14,
+      "visionRadius": 18
+    }
+  ],
+  "bestEpisodeMA50": 391.0103968607858,
+  "bestStage": "pen3",
+  "bestEpisodeIndex": 258,
+  "killRatesByStage": {
+    "pen3": 1,
+    "pen6": 0.36666666666666664,
+    "pen12": 0.08333333333333333,
+    "open": 0.016666666666666666
+  },
+  "policyConfig": {
+    "hidden": 32,
+    "lr": 0.002,
+    "baselineEMA": 0.95,
+    "entropyCoef": 0.01
+  },
+  "weightStats": {
+    "W1": {
+      "n": 4480,
+      "mean": 0.0003107583453697263,
+      "std": 0.1192539098920528,
+      "min": -0.41436418890953064,
+      "max": 0.48155903816223145
+    },
+    "W2": {
+      "n": 352,
+      "mean": 0.028740382204473877,
+      "std": 0.26070170785226554,
+      "min": -0.6684942841529846,
+      "max": 0.7761696577072144
+    },
+    "b1": {
+      "n": 32,
+      "mean": 0.002162695725701269,
+      "std": 0.013423501445475215,
+      "min": -0.029602406546473503,
+      "max": 0.02366246096789837
+    },
+    "b2": {
+      "n": 11,
+      "mean": -0.0004898000466213985,
+      "std": 0.014312496288349807,
+      "min": -0.020758185535669327,
+      "max": 0.021355612203478813
+    }
+  },
+  "historyLength": 2400
+}

@@ -1,0 +1,77 @@
+{
+  "archetype": "cat",
+  "trainedAt": "2026-05-23T21:00:07.458Z",
+  "episodesPerStage": 600,
+  "stages": [
+    {
+      "label": "pen3",
+      "bounds": 3,
+      "spawnRadius": 2,
+      "visionRadius": 6
+    },
+    {
+      "label": "pen6",
+      "bounds": 6,
+      "spawnRadius": 4,
+      "visionRadius": 10
+    },
+    {
+      "label": "pen12",
+      "bounds": 12,
+      "spawnRadius": 8,
+      "visionRadius": 14
+    },
+    {
+      "label": "open",
+      "bounds": 25,
+      "spawnRadius": 14,
+      "visionRadius": 18
+    }
+  ],
+  "bestEpisodeMA50": 397.17910169344157,
+  "bestStage": "pen3",
+  "bestEpisodeIndex": 588,
+  "killRatesByStage": {
+    "pen3": 0.9833333333333333,
+    "pen6": 0.48333333333333334,
+    "pen12": 0.21666666666666667,
+    "open": 0.08333333333333333
+  },
+  "policyConfig": {
+    "hidden": 32,
+    "lr": 0.002,
+    "baselineEMA": 0.95,
+    "entropyCoef": 0.01
+  },
+  "weightStats": {
+    "W1": {
+      "n": 4480,
+      "mean": -0.0005391848459177189,
+      "std": 0.11853938654238173,
+      "min": -0.3925246000289917,
+      "max": 0.4409979581832886
+    },
+    "W2": {
+      "n": 352,
+      "mean": -0.019102939499134663,
+      "std": 0.260470330592497,
+      "min": -0.7271282076835632,
+      "max": 0.6857707500457764
+    },
+    "b1": {
+      "n": 32,
+      "mean": 0.00012016305026918417,
+      "std": 0.013000545561558208,
+      "min": -0.023665571585297585,
+      "max": 0.026363128796219826
+    },
+    "b2": {
+      "n": 11,
+      "mean": 0.0017763572501611304,
+      "std": 0.014260806507947895,
+      "min": -0.02692260406911373,
+      "max": 0.03230336681008339
+    }
+  },
+  "historyLength": 2400
+}
