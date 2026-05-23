@@ -155,3 +155,59 @@ export interface GrassPatch {
   /** Counter for regrowth once depleted. */
   regrowTimer: number;
 }
+
+/**
+ * RL4: Direct control + minimap observation
+ *
+ * Player can control any entity type with unified action space:
+ * - 8 movement directions (w/a/s/d cardinal + diagonals)
+ * - 3 ability slots (1/2/3)
+ * Total: 11 discrete actions
+ *
+ * Observation is minimap-style: all visible entities with position, HP, type.
+ * Policy learns target selection, positioning, and ability timing.
+ */
+
+export const enum Action {
+  /** Movement: forward */
+  MoveForward = 0,
+  /** Movement: backward */
+  MoveBackward = 1,
+  /** Movement: strafe left */
+  StrafeLeft = 2,
+  /** Movement: strafe right */
+  StrafeRight = 3,
+  /** Movement: forward-left diagonal */
+  MoveFwdLeft = 4,
+  /** Movement: forward-right diagonal */
+  MoveFwdRight = 5,
+  /** Movement: backward-left diagonal */
+  MoveBackLeft = 6,
+  /** Movement: backward-right diagonal */
+  MoveBackRight = 7,
+  /** Ability 1 */
+  Ability1 = 8,
+  /** Ability 2 */
+  Ability2 = 9,
+  /** Ability 3 */
+  Ability3 = 10,
+}
+export const ACTION_COUNT = 11;
+
+/** Maximum entities observable in minimap state (padding for variable counts). */
+export const MAX_ENTITIES_RL4 = 20;
+
+/**
+ * Per-entity minimap features:
+ *   0  rel_x         — relative X position (normalized by vision radius)
+ *   1  rel_z         — relative Z position (normalized by vision radius)
+ *   2  vel_x         — X velocity (normalized by max speed)
+ *   3  vel_z         — Z velocity (normalized by max speed)
+ *   4  hp_pct        — current HP / max HP
+ *   5  archetype     — categorical (0=none, 1=wolf, 2=rabbit, 3=cow, 4=cat, 5=dog, 6=werewolf)
+ *   6  team          — 0=same team, 1=enemy team
+ */
+export const FEATURES_PER_ENTITY_RL4 = 7;
+
+/** Total observation size: MAX_ENTITIES_RL4 * FEATURES_PER_ENTITY_RL4 */
+export const STATE_DIM_RL4 = MAX_ENTITIES_RL4 * FEATURES_PER_ENTITY_RL4;
