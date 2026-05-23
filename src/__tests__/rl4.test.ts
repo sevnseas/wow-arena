@@ -15,7 +15,8 @@ describe('RL4 Direct Control', () => {
   });
 
   it('Observation space is correct size', () => {
-    expect(STATE_DIM_RL4).toBe(MAX_ENTITIES_RL4 * 7);
+    // 20 entity slots × 7 features + 5 self-state features (ecosystem.md).
+    expect(STATE_DIM_RL4).toBe(MAX_ENTITIES_RL4 * 7 + 5);
   });
 
   it('Policy4 forward pass produces valid probabilities', () => {

@@ -229,5 +229,17 @@ export const MAX_ENTITIES_RL4 = 20;
  */
 export const FEATURES_PER_ENTITY_RL4 = 7;
 
-/** Total observation size: MAX_ENTITIES_RL4 * FEATURES_PER_ENTITY_RL4 */
-export const STATE_DIM_RL4 = MAX_ENTITIES_RL4 * FEATURES_PER_ENTITY_RL4;
+/** Self-state features appended after the MAX_ENTITIES_RL4×7 entity grid:
+ *    0  self_hp_pct        — current HP / max HP
+ *    1  self_age_pct       — age / maxAge (mortality clock)
+ *    2  self_counter_pct   — grassEaten/threshold or preyEaten/threshold
+ *                            (clamped to [0, 1]); tells the policy when it
+ *                            can reproduce.
+ *    3  nearest_grass_rel_x — relative X of nearest grass patch in vision
+ *    4  nearest_grass_rel_z — relative Z of nearest grass patch in vision
+ *  All zero if no grass in env. Wolves see grass too but learn to ignore it.
+ *  See ecosystem.md §observation. */
+export const SELF_FEATURES_RL4 = 5;
+
+/** Total observation size: entity grid + self-state. */
+export const STATE_DIM_RL4 = MAX_ENTITIES_RL4 * FEATURES_PER_ENTITY_RL4 + SELF_FEATURES_RL4;

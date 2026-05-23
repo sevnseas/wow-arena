@@ -9,7 +9,7 @@
 
 import { RLEnv } from './env';
 import {
-  Action, MAX_ENTITIES_RL4, FEATURES_PER_ENTITY_RL4, STATE_DIM_RL4,
+  Action, MAX_ENTITIES_RL4, FEATURES_PER_ENTITY_RL4, STATE_DIM_RL4, SELF_FEATURES_RL4,
   type Entity, type EntityInit, type EnvConfig, type Archetype,
 } from './types';
 
@@ -165,6 +165,33 @@ export function observe4(env4: RLEnv4, e: Entity): Float32Array {
   }
 
   // Pad remaining slots with zeros (already initialized).
+
+  // Self-state features at the end. See SELF_FEATURES_RL4 docstring for
+  // the slot layout — these tell the policy how much HP it has left, how
+  // close to natural death, how full its reproduction counter is, and
+  // where the nearest grass patch is.
+  const selfBase = MAX_ENTITIES_RL4 * FEATURES_PER_ENTITY_RL4;
+  state[selfBase + 0] = e.maxHp > 0 ? Math.max(0, e.hp / e.maxHp) : 0;
+  state[selfBase + 1] = e.maxAge > 0 ? Math.min(1, e.age / e.maxAge) : 0;
+  const counterThreshold = e.archetype === 'rabbit'
+    ? env4.config.reproThreshold.rabbit
+    : env4.config.reproThreshold.wolf;
+  const counter = e.archetype === 'rabbit' ? e.grassEaten : e.preyEaten;
+  state[selfBase + 2] = counterThreshold > 0 ? Math.min(1, counter / counterThreshold) : 0;
+  // Nearest grass — only meaningful for rabbits in practice, but wolves
+  // get the input too (their policy learns to ignore it).
+  let bestD = Infinity, bestGx = 0, bestGz = 0;
+  for (const g of env4.grass) {
+    if (g.nutrition <= 0) continue;
+    const dx = g.x - e.x, dz = g.z - e.z;
+    const d = dx * dx + dz * dz;
+    if (d < bestD) { bestD = d; bestGx = dx; bestGz = dz; }
+  }
+  if (Number.isFinite(bestD) && bestD <= visSq) {
+    state[selfBase + 3] = bestGx / visionRadius;
+    state[selfBase + 4] = bestGz / visionRadius;
+  }
+  void SELF_FEATURES_RL4;
   return state;
 }
 
@@ -328,31 +355,44 @@ export function clearEcosystemEvents(env4: RLEnv4): void {
   env4.events.length = 0;
 }
 
-/** Compute per-entity reward this decision interval. */
-export function computeReward4(
-  env4: RLEnv4,
-  e: Entity & { lastHp: number; rewardThisEpisode: number; lastEnemyDist?: number },
-): number {
-  let r = 0;
+/** Reward shaping mode — pick the right reward function for what we're
+ *  training. The legacy 'hunt' mode is what RL4 currently trains on.
+ *  'rabbit' rewards grazing + reproduction + survival. 'wolf' rewards
+ *  hunting + eating + reproduction. */
+export type RewardMode = 'hunt' | 'rabbit' | 'wolf';
 
-  // Damage dealt this tick.
+/** Per-entity reward bookkeeping the shaping functions need across ticks. */
+type RewardCarry = Entity & {
+  lastHp: number;
+  rewardThisEpisode: number;
+  lastEnemyDist?: number;
+  lastGrassDist?: number;
+};
+
+/** Compute per-entity reward this decision interval. `mode` selects which
+ *  shaping function to use; see RewardMode. Legacy callers (no mode) get
+ *  the 'hunt' shaping that all the trained wolf/cat/werewolf policies used. */
+export function computeReward4(env4: RLEnv4, e: RewardCarry, mode: RewardMode = 'hunt'): number {
+  switch (mode) {
+    case 'rabbit': return rewardRabbit(env4, e);
+    case 'wolf':   return rewardWolf(env4, e);
+    case 'hunt':
+    default:       return rewardHunt(env4, e);
+  }
+}
+
+/** Hunting (legacy RL4): damage dealt, kill bonus, distance-closing on
+ *  nearest enemy. What wolf/cat/werewolf were trained on. */
+function rewardHunt(env4: RLEnv4, e: RewardCarry): number {
+  let r = 0;
   const dmgEvents = env4.env.events.filter(ev => ev.type === 'damage' && ev.attackerId === e.id);
   for (const ev of dmgEvents) {
     r += ev.amount * 0.1;
     if (ev.killed) r += 3;
   }
-
-  // Survival.
-  r += 0.01;
-
-  // Penalty for taking damage.
+  r += 0.01; // survival
   const dmgTaken = Math.max(0, e.lastHp - e.hp);
   r -= dmgTaken * 0.15;
-
-  // Distance-closing shaping: predators get a dense gradient signal when they
-  // walk toward the nearest enemy. Without this, the wolf must stumble into
-  // contact range purely by chance — too sparse for REINFORCE to learn from
-  // within a reasonable training budget.
   let nearestEnemyDist = Infinity;
   for (const o of env4.env.entities) {
     if (!o.alive || o.id === e.id || o.team === e.team) continue;
@@ -361,13 +401,87 @@ export function computeReward4(
     if (d < nearestEnemyDist) nearestEnemyDist = d;
   }
   if (Number.isFinite(nearestEnemyDist) && e.lastEnemyDist !== undefined) {
-    // +reward for each meter closed. Magnitude chosen so closing 1m/decision
-    // dwarfs the +0.01 survival ticks but stays below the +0.1/dmg signal —
-    // dense gradient for navigation, kills still dominate the long-term return.
     r += (e.lastEnemyDist - nearestEnemyDist) * 0.5;
   }
   e.lastEnemyDist = Number.isFinite(nearestEnemyDist) ? nearestEnemyDist : undefined;
+  e.lastHp = e.hp;
+  e.rewardThisEpisode += r;
+  return r;
+}
 
+/** Rabbit shaping: reward grazing + each successful birth + staying alive,
+ *  penalize starvation HP drain. Distance-closing on nearest grass when
+ *  hungry (counter < threshold) — once full, no shaping toward grass so the
+ *  policy is free to seek a partner. */
+function rewardRabbit(env4: RLEnv4, e: RewardCarry): number {
+  let r = 0;
+  const grazedEv = env4.events.filter(ev => ev.type === 'grazed' && (ev as any).entityId === e.id);
+  for (const ev of grazedEv) r += (ev as any).amount * 0.5;
+  const bornEv = env4.events.filter(ev => ev.type === 'born' &&
+    ((ev as any).parentAId === e.id || (ev as any).parentBId === e.id));
+  r += bornEv.length * 10;
+  r += 0.02; // alive-this-tick bonus — strong incentive to dodge predators
+  const dmgTaken = Math.max(0, e.lastHp - e.hp);
+  r -= dmgTaken * 0.2;
+  // Distance to nearest grass — only shape it when the rabbit still needs
+  // food. Once full, no pull, so it can focus on finding a mate.
+  const threshold = env4.config.reproThreshold.rabbit;
+  if (e.grassEaten < threshold) {
+    let bestD = Infinity;
+    for (const g of env4.grass) {
+      if (g.nutrition <= 0) continue;
+      const d = Math.hypot(g.x - e.x, g.z - e.z);
+      if (d < bestD) bestD = d;
+    }
+    if (Number.isFinite(bestD) && e.lastGrassDist !== undefined) {
+      r += (e.lastGrassDist - bestD) * 0.4;
+    }
+    e.lastGrassDist = Number.isFinite(bestD) ? bestD : undefined;
+  } else {
+    // Full — pull toward nearest same-team partner instead.
+    let bestD = Infinity;
+    for (const o of env4.env.entities) {
+      if (!o.alive || o.id === e.id || o.archetype !== e.archetype) continue;
+      const d = Math.hypot(o.x - e.x, o.z - e.z);
+      if (d < bestD) bestD = d;
+    }
+    if (Number.isFinite(bestD) && e.lastGrassDist !== undefined) {
+      r += (e.lastGrassDist - bestD) * 0.4;
+    }
+    e.lastGrassDist = Number.isFinite(bestD) ? bestD : undefined;
+  }
+  e.lastHp = e.hp;
+  e.rewardThisEpisode += r;
+  return r;
+}
+
+/** Wolf shaping: damage + kills (which auto-credit preyEaten) + each
+ *  successful birth + alive bonus. Distance shaping on nearest rabbit
+ *  always (predator's primary goal). */
+function rewardWolf(env4: RLEnv4, e: RewardCarry): number {
+  let r = 0;
+  const dmgEvents = env4.env.events.filter(ev => ev.type === 'damage' && ev.attackerId === e.id);
+  for (const ev of dmgEvents) {
+    r += ev.amount * 0.1;
+    if (ev.killed) r += 3;
+  }
+  const bornEv = env4.events.filter(ev => ev.type === 'born' &&
+    ((ev as any).parentAId === e.id || (ev as any).parentBId === e.id));
+  r += bornEv.length * 10;
+  r += 0.01;
+  const dmgTaken = Math.max(0, e.lastHp - e.hp);
+  r -= dmgTaken * 0.15;
+  let nearestEnemyDist = Infinity;
+  for (const o of env4.env.entities) {
+    if (!o.alive || o.id === e.id || o.team === e.team) continue;
+    const dx = o.x - e.x, dz = o.z - e.z;
+    const d = Math.hypot(dx, dz);
+    if (d < nearestEnemyDist) nearestEnemyDist = d;
+  }
+  if (Number.isFinite(nearestEnemyDist) && e.lastEnemyDist !== undefined) {
+    r += (e.lastEnemyDist - nearestEnemyDist) * 0.5;
+  }
+  e.lastEnemyDist = Number.isFinite(nearestEnemyDist) ? nearestEnemyDist : undefined;
   e.lastHp = e.hp;
   e.rewardThisEpisode += r;
   return r;

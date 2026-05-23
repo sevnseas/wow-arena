@@ -3,8 +3,8 @@
  * (grass, age, starvation, Interact reproduction). See ecosystem.md.
  */
 import { describe, it, expect } from 'vitest';
-import { createEnv4, spawn4, spawnGrass, step4, act4, clearEcosystemEvents } from '../rl/env4';
-import { Action } from '../rl/types';
+import { createEnv4, spawn4, spawnGrass, step4, act4, clearEcosystemEvents, observe4, computeReward4 } from '../rl/env4';
+import { Action, MAX_ENTITIES_RL4, FEATURES_PER_ENTITY_RL4 } from '../rl/types';
 
 function rabbit(env: any, x: number, z: number, opts: any = {}) {
   return spawn4(env, {
@@ -155,6 +155,69 @@ describe('env4 ecosystem: Interact reproduction', () => {
     expect(w.preyEaten).toBeGreaterThanOrEqual(1);
     const dieEv = env.events.find(e => e.type === 'died' && (e as any).entityId === r.id);
     expect((dieEv as any).cause).toBe('predator');
+  });
+});
+
+describe('env4 ecosystem: observation self-state features', () => {
+  const SELF_BASE = MAX_ENTITIES_RL4 * FEATURES_PER_ENTITY_RL4;
+  it('encodes hp%, age%, counter%, nearest grass rel pos', () => {
+    const env = createEnv4({ bounds: 5 });
+    const r = rabbit(env, 0, 0, { maxAge: 100 });
+    spawnGrass(env, 2, 0); // east of rabbit
+    r.hp = 15; // 50% hp
+    r.age = 25; // 25% age
+    r.grassEaten = 1.5; // 50% of threshold 3
+
+    const obs = observe4(env, r);
+    expect(obs[SELF_BASE + 0]).toBeCloseTo(0.5, 2);    // hp%
+    expect(obs[SELF_BASE + 1]).toBeCloseTo(0.25, 2);   // age%
+    expect(obs[SELF_BASE + 2]).toBeCloseTo(0.5, 2);    // counter%
+    expect(obs[SELF_BASE + 3]).toBeGreaterThan(0);     // nearest grass +x
+    expect(obs[SELF_BASE + 4]).toBeCloseTo(0, 4);      // grass directly east → z=0
+  });
+
+  it('grass features are zero when no patches in vision', () => {
+    const env = createEnv4({ bounds: 5 });
+    const r = rabbit(env, 0, 0);
+    const obs = observe4(env, r);
+    expect(obs[SELF_BASE + 3]).toBe(0);
+    expect(obs[SELF_BASE + 4]).toBe(0);
+  });
+});
+
+describe('env4 ecosystem: reward shaping', () => {
+  it('rabbit mode rewards grazing', () => {
+    const env = createEnv4({ bounds: 5 });
+    const r = rabbit(env, 0, 0);
+    spawnGrass(env, 0, 0);
+    r.hp = 10;
+    (r as any).lastHp = r.hp;
+    (r as any).rewardThisEpisode = 0;
+    step4(env, 0.5); // grazing happens
+    const rew = computeReward4(env, r as any, 'rabbit');
+    expect(rew).toBeGreaterThan(0);
+  });
+
+  it('rabbit mode rewards reproduction', () => {
+    const env = createEnv4({ bounds: 5 });
+    const a = rabbit(env, 0, 0);
+    const b = rabbit(env, 0.4, 0);
+    a.grassEaten = 3; b.grassEaten = 3;
+    (a as any).lastHp = a.hp; (a as any).rewardThisEpisode = 0;
+    act4(env, a, Action.Interact, 0.1);
+    const rew = computeReward4(env, a as any, 'rabbit');
+    expect(rew).toBeGreaterThan(5); // +10 per birth easily dominates
+  });
+
+  it('wolf mode rewards reproduction', () => {
+    const env = createEnv4({ bounds: 5 });
+    const a = wolf(env, 0, 0);
+    const b = wolf(env, 0.6, 0);
+    a.preyEaten = 1;
+    (a as any).lastHp = a.hp; (a as any).rewardThisEpisode = 0;
+    act4(env, a, Action.Interact, 0.1);
+    const rew = computeReward4(env, a as any, 'wolf');
+    expect(rew).toBeGreaterThan(5);
   });
 });
 
