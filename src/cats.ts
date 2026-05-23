@@ -8,7 +8,8 @@ import * as THREE from 'three';
 import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
+import { applyIntentToPreyState, combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState, notePreyAttacker, tickGrazeHeal } from './prey';
+import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.4;
@@ -46,6 +47,8 @@ interface Cat {
   bounds: number;
   heightData: Uint8Array | null;
   held: boolean;
+  personalityBias: Float32Array;
+  temperature: number;
   prey: PreyState;
   id: string;
   name: string;
@@ -180,6 +183,13 @@ function pickTarget(bounds: number): THREE.Vector3 {
   );
 }
 
+function makeCatPersonality(): Float32Array {
+  const b = new Float32Array(INTENT_COUNT);
+  b[Intent.Attack] = 0.2 + Math.random() * 0.4;   // cats moderately predatory
+  b[Intent.Heal] = (Math.random() - 0.3) * 0.4;   // some prefer hiding
+  return b;
+}
+
 export class CatColony implements HoldableProvider, PreyProvider {
   private cats: Cat[] = [];
   private group: THREE.Group;
@@ -216,9 +226,13 @@ export class CatColony implements HoldableProvider, PreyProvider {
       prey: makePreyState(45),
       id: `cat-${this.cats.length + 1}`,
       name: 'Cat',
+      personalityBias: makeCatPersonality(),
+      temperature: 0.6 + Math.random() * 0.6,
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = cat.yaw;
+    parts.group.userData.policyAgentId = cat.id;
+    parts.group.userData.policyArchetype = 'cat';
     this.group.add(parts.group);
     this.cats.push(cat);
   }
@@ -245,6 +259,34 @@ export class CatColony implements HoldableProvider, PreyProvider {
       this.spawnCat();
       this.respawnTimer = 8 + Math.random() * 4;
     }
+  }
+
+  getPolicyAgents(): PolicyAgentRef[] {
+    return this.cats.map(c => this.makePolicyAgent(c));
+  }
+
+  private makePolicyAgent(c: Cat): PolicyAgentRef {
+    return {
+      id: c.id,
+      team: 'predator',
+      archetype: 'cat',
+      size: CAT_RADIUS,
+      personalityBias: c.personalityBias,
+      temperature: c.temperature,
+      get alive() { return !c.prey.dead && !c.held; },
+      get hp() { return c.prey.hp; },
+      get maxHp() { return c.prey.maxHp; },
+      get status() { return 0 as 0 | 1 | 2; },
+      get pos() { return { x: c.pos.x, z: c.pos.z }; },
+      get attackerId() { return c.prey.lastAttackerId; },
+      applyIntent(intent, focus, ctx) {
+        applyIntentToPreyState(
+          c.prey, intent as 0|1|2|3|4, focus,
+          () => null,
+          (id) => ctx?.resolveAttacker?.(id) ?? null,
+        );
+      },
+    };
   }
 
   findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
@@ -277,6 +319,7 @@ export class CatColony implements HoldableProvider, PreyProvider {
         c.prey.hp -= amount;
         c.prey.lastHitAt = performance.now();
         emitDamageSplat(c.parts.group, amount);
+        notePreyAttacker(c.prey, attacker);
         if (attacker?.alive) c.prey.combatTarget = attacker;
         if (c.prey.hp <= 0) {
           c.prey.hp = 0;
@@ -350,6 +393,11 @@ export class CatColony implements HoldableProvider, PreyProvider {
   }
 
   private updateCat(cat: Cat, delta: number): void {
+    const grazed = tickGrazeHeal(cat.prey, delta, 5);
+    if (grazed > 0) emitHealSplat(cat.parts.group, grazed);
+    if (cat.prey.grazingUntil > performance.now()) {
+      cat.pauseTimer = Math.max(cat.pauseTimer, 0.3);
+    }
     this.updateCombat(cat, delta);
     const moving = cat.pauseTimer <= 0;
 

@@ -29,6 +29,31 @@ npm test
 npm run dev
 ```
 
+## RL training (predator / prey policies)
+
+The headless RL environment in `src/rl/` runs the game on pure tick time
+(no Three.js, no wall-clock waits). It implements the two-tier architecture
+from [`entity-policies.md`](./entity-policies.md):
+
+- **Tier 1 — Neural brain.** A tiny shared MLP per archetype outputs logits
+  over 5 intentions (`Idle / Attack / CC / Heal / Flee`). Per-entity diversity
+  comes from `personalityBias` + softmax `temperature` — no retraining needed.
+- **Tier 2 — Algorithmic engine** (`src/rl/engine.ts`) executes the held
+  intention: steering toward focus for Attack, away for Flee, attack-timer
+  bookkeeping, damage. The brain never sees raycasts or paths.
+
+Damage is size-proportional: `dmg = baseDamage * attacker.size`. The live
+game's wolves use the same rule (see `wolves.ts`).
+
+```bash
+npm run train               # 300 episodes, ~1s, writes public/policies/*.json
+npm run train -- 1000 800   # episodes / max-ticks
+npm test src/__tests__/rl.test.ts
+```
+
+The trainer prints the three validation checks from
+`entity-policies.md` §4 (Kiting / Target Lock / Stochastic Variance).
+
 ## Controls
 
 - `WASD` moves relative to character facing.

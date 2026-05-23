@@ -11,8 +11,12 @@
  */
 
 import * as THREE from 'three';
+import type { PolicyDriver } from './rl';
+import { Intent } from './rl';
 
 const EDITOR_HOTKEY = 'Backquote';
+const INTENT_NAMES = ['Idle', 'Attack', 'CC', 'Heal', 'Flee'];
+const INTENT_COLORS = ['#888', '#e57368', '#c890e7', '#7ad08c', '#e5c473'];
 
 type Listener = (obj: THREE.Object3D | null) => void;
 
@@ -27,6 +31,8 @@ export class SceneEditor {
   private readonly panel: HTMLDivElement;
   private readonly listeners = new Set<Listener>();
   private highlight: THREE.LineSegments | null = null;
+  private policyDriver: PolicyDriver | null = null;
+  private aiPanelTimer: number | null = null;
 
   constructor(scene: THREE.Scene, camera: THREE.Camera, canvas: HTMLCanvasElement) {
     this.scene = scene;
@@ -61,18 +67,37 @@ export class SceneEditor {
     this.listeners.add(fn);
   }
 
+  /** Wire the RL driver so the editor can show live intent + probabilities. */
+  setPolicyDriver(driver: PolicyDriver): void {
+    this.policyDriver = driver;
+  }
+
   toggle(): void {
     this.open = !this.open;
     this.panel.style.display = this.open ? 'block' : 'none';
     if (!this.open) this.clearHighlight();
     else this.render();
+    this.refreshAiTimer();
   }
 
   select(obj: THREE.Object3D | null): void {
     this.selected = obj;
     this.updateHighlight();
     this.render();
+    this.refreshAiTimer();
     for (const l of this.listeners) l(obj);
+  }
+
+  /** Keep the AI panel ticking while an entity with a policy is selected. */
+  private refreshAiTimer(): void {
+    if (this.aiPanelTimer !== null) {
+      window.clearInterval(this.aiPanelTimer);
+      this.aiPanelTimer = null;
+    }
+    if (!this.open || !this.selected || !this.policyDriver) return;
+    const id = findPolicyAgentId(this.selected);
+    if (!id) return;
+    this.aiPanelTimer = window.setInterval(() => this.renderAiPanel(), 400);
   }
 
   /** Render world-space helpers (called each frame). */
@@ -230,6 +255,12 @@ export class SceneEditor {
     // Visible toggle
     this.panel.appendChild(toggleRow('Visible', sel.visible, v => { sel.visible = v; }));
 
+    // RL policy section (if this selection — or any ancestor — owns a policy agent).
+    if (this.policyDriver) {
+      const id = findPolicyAgentId(sel);
+      if (id) this.appendAiSection(id);
+    }
+
     // Generator params (if object exposes them via userData.editableParams)
     const ep = (sel as any).userData?.editableParams;
     if (ep && typeof ep.get === 'function' && typeof ep.set === 'function' && Array.isArray(ep.schema)) {
@@ -337,6 +368,114 @@ export class SceneEditor {
     this.panel.appendChild(wrap);
   }
 
+  /**
+   * "Policy / AI" section. Shows the agent's archetype, current intent, the
+   * full probability distribution (post-personality, post-temperature) with
+   * horizontal bars, plus the per-individual personality bias and temperature.
+   * Container is given an id so `renderAiPanel()` can refresh just this block
+   * without rebuilding the whole panel (which would tear down edit focus).
+   */
+  private appendAiSection(agentId: string): void {
+    const wrap = document.createElement('div');
+    wrap.id = 'ai-panel';
+    wrap.style.cssText = 'margin:6px 0;padding:6px;border-top:1px solid #333;background:rgba(40,30,60,0.4);border-radius:3px';
+    this.panel.appendChild(wrap);
+    this.renderAiPanel(wrap, agentId);
+  }
+
+  private renderAiPanel(container?: HTMLElement, idOverride?: string): void {
+    const wrap = container ?? (this.panel.querySelector('#ai-panel') as HTMLElement | null);
+    if (!wrap || !this.policyDriver || !this.selected) return;
+    const id = idOverride ?? findPolicyAgentId(this.selected);
+    if (!id) return;
+    const agent = this.policyDriver.getAgent(id);
+    const decision = this.policyDriver.getDecision(id);
+
+    wrap.innerHTML = '';
+    const title = document.createElement('div');
+    title.style.cssText = 'color:#cfa9ff;margin-bottom:4px;font-weight:bold';
+    title.textContent = agent ? `Policy / AI · ${agent.archetype}` : 'Policy / AI';
+    wrap.appendChild(title);
+
+    if (!agent) {
+      const note = document.createElement('div');
+      note.style.cssText = 'color:#888';
+      note.textContent = '(agent not currently registered with driver)';
+      wrap.appendChild(note);
+      return;
+    }
+
+    // Header line: current intent + HP + temperature.
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;gap:10px;font-size:11px;color:#bbb;margin-bottom:4px';
+    const intent = decision?.intent ?? null;
+    const intentName = intent !== null ? INTENT_NAMES[intent] : '—';
+    const intentColor = intent !== null ? INTENT_COLORS[intent] : '#888';
+    head.innerHTML =
+      `<span>intent: <b style="color:${intentColor}">${intentName}</b></span>` +
+      `<span>hp: <b style="color:#9cf">${agent.hp.toFixed(0)}/${agent.maxHp.toFixed(0)}</b></span>` +
+      `<span>τ: <b style="color:#9cf">${agent.temperature.toFixed(2)}</b></span>`;
+    wrap.appendChild(head);
+
+    // Probability bars over all 5 intents — the actual softmax that selected
+    // the action this decision cycle.
+    if (decision) {
+      const bars = document.createElement('div');
+      bars.style.cssText = 'margin:4px 0';
+      const probs = decision.probs;
+      for (let k = 0; k < probs.length; k++) {
+        const row2 = document.createElement('div');
+        row2.style.cssText = 'display:flex;align-items:center;gap:6px;margin:1px 0;font-size:10px';
+        const label = document.createElement('span');
+        label.textContent = INTENT_NAMES[k];
+        label.style.cssText = `width:42px;color:${INTENT_COLORS[k]}`;
+        const barWrap = document.createElement('div');
+        barWrap.style.cssText = 'flex:1;background:#202028;border:1px solid #333;height:10px;position:relative';
+        const bar = document.createElement('div');
+        bar.style.cssText = `position:absolute;left:0;top:0;bottom:0;width:${(probs[k] * 100).toFixed(1)}%;background:${INTENT_COLORS[k]};opacity:${k === intent ? '1' : '0.55'}`;
+        barWrap.appendChild(bar);
+        const pct = document.createElement('span');
+        pct.style.cssText = 'width:38px;text-align:right;color:#ccc';
+        pct.textContent = `${(probs[k] * 100).toFixed(1)}%`;
+        row2.appendChild(label);
+        row2.appendChild(barWrap);
+        row2.appendChild(pct);
+        bars.appendChild(row2);
+      }
+      wrap.appendChild(bars);
+
+      // Personality bias (raw additive logit offset per intent — not trained).
+      const pb = document.createElement('div');
+      pb.style.cssText = 'font-size:10px;color:#888;margin-top:4px';
+      pb.textContent = 'personality bias: ' +
+        Array.from(agent.personalityBias).map((v, i) => `${INTENT_NAMES[i][0]}=${v.toFixed(2)}`).join(' ');
+      wrap.appendChild(pb);
+
+      // State vector — useful for debugging the brain inputs.
+      const stateNames = ['hp%', 'status', 'focusType', 'focusHp', 'focusDist', 'allyDanger', 'pressure'];
+      const stateLine = document.createElement('div');
+      stateLine.style.cssText = 'font-size:10px;color:#7aa;margin-top:2px;line-height:1.5';
+      stateLine.textContent = 'state: ' +
+        Array.from(decision.state).map((v, i) => `${stateNames[i]}=${v.toFixed(2)}`).join(' ');
+      wrap.appendChild(stateLine);
+
+      const ago = (this.policyDriverElapsed() - decision.takenAt);
+      const meta = document.createElement('div');
+      meta.style.cssText = 'font-size:10px;color:#666;margin-top:3px';
+      meta.textContent = `last decision ${ago.toFixed(2)}s ago · focus=${decision.focusId ?? '∅'}`;
+      wrap.appendChild(meta);
+    } else {
+      const note = document.createElement('div');
+      note.style.cssText = 'color:#888;font-size:11px';
+      note.textContent = 'awaiting first decision…';
+      wrap.appendChild(note);
+    }
+  }
+
+  private policyDriverElapsed(): number {
+    return (this.policyDriver as unknown as { elapsed: number } | null)?.elapsed ?? 0;
+  }
+
   private appendMaterial(m: THREE.Material, suffix: string): void {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'margin:6px 0;padding:4px;border-top:1px solid #333';
@@ -391,6 +530,20 @@ function makeInstanceProxy(source: THREE.InstancedMesh, instanceId: number): THR
   };
   return proxy;
 }
+
+/** Walk a selection's ancestor chain looking for a tagged policy agent. */
+function findPolicyAgentId(obj: THREE.Object3D | null): string | null {
+  let cur: THREE.Object3D | null = obj;
+  while (cur) {
+    const id = cur.userData?.policyAgentId;
+    if (typeof id === 'string') return id;
+    cur = cur.parent;
+  }
+  return null;
+}
+
+// Re-export so the panel can read Intent enum values if needed elsewhere.
+export { Intent };
 
 // ---------- small DOM helpers (kept local; not exported) ----------
 

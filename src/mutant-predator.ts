@@ -15,6 +15,7 @@ import {
   type PreyRef,
   type PreyState,
 } from './prey';
+import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
 
 const MUTANT_RADIUS = 0.75;
 const WALK_SPEED = 2.2;
@@ -62,6 +63,8 @@ export class MutantPredator implements PreyProvider {
     this.view.root.name = 'MutantWerewolf';
     this.view.root.position.copy(this.pos);
     this.view.root.scale.multiplyScalar(1.08);
+    this.view.root.userData.policyAgentId = this.id;
+    this.view.root.userData.policyArchetype = 'werewolf';
     this.scene.add(this.view.root);
   }
 
@@ -78,6 +81,74 @@ export class MutantPredator implements PreyProvider {
 
   setColliders(colliders: Collider[]): void {
     this.colliders = colliders;
+  }
+
+  /**
+   * Brain-driven adapter for the werewolf boss. The trained policy chooses
+   * Attack to lock onto a focus, Idle to drop combat (rare), or Flee to
+   * retreat when overwhelmed — the existing prowl/hunt/attack state machine
+   * still executes the actual movement and bite timing.
+   */
+  getPolicyAgents(): PolicyAgentRef[] {
+    if (this.preyState.dead) return [];
+    const self = this;
+    return [{
+      id: this.id,
+      team: 'predator',
+      archetype: 'werewolf',
+      size: MUTANT_RADIUS,
+      personalityBias: this.personalityBias,
+      temperature: this.temperature,
+      get alive() { return !self.preyState.dead; },
+      get hp() { return self.preyState.hp; },
+      get maxHp() { return self.preyState.maxHp; },
+      get status() { return 0 as 0 | 1 | 2; },
+      get pos() { return { x: self.pos.x, z: self.pos.z }; },
+      get attackerId() { return self.preyState.lastAttackerId; },
+      applyIntent(intent, focus, _ctx) {
+        if (self.preyState.dead) return;
+        if (intent === Intent.Attack && focus) {
+          const ref = self.resolveTargetByPos(focus.id, focus.pos.x, focus.pos.z);
+          if (ref) {
+            self.prey = ref;
+            self.state = 'hunt';
+          }
+        } else if (intent === Intent.Flee && focus) {
+          // Werewolf rarely flees — but if the brain decides to, override the
+          // target to a point away from the focus and switch back to prowl.
+          self.target.set(
+            self.pos.x - (focus.pos.x - self.pos.x),
+            0,
+            self.pos.z - (focus.pos.z - self.pos.z),
+          );
+          self.state = 'prowl';
+          self.prey = null;
+        } else if (intent === Intent.Idle) {
+          self.prey = null;
+          self.state = 'prowl';
+        }
+      },
+    }];
+  }
+
+  private personalityBias: Float32Array = (() => {
+    const b = new Float32Array(INTENT_COUNT);
+    b[Intent.Attack] = 0.9;  // boss is almost always aggressive
+    return b;
+  })();
+  private temperature = 0.5;
+
+  private resolveTargetByPos(id: string, x: number, z: number): CombatTargetRef | null {
+    for (const prov of this.preyProviders) {
+      let found: CombatTargetRef | null = null;
+      prov.forEachPrey(ref => {
+        if (found || !ref.alive) return;
+        if (ref.id === id) { found = ref; return; }
+        if (Math.hypot(ref.pos.x - x, ref.pos.z - z) < 0.6) found = ref;
+      });
+      if (found) return found;
+    }
+    return null;
   }
 
   update(delta: number): void {

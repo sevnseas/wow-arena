@@ -8,7 +8,8 @@ import * as THREE from 'three';
 import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
+import { applyIntentToPreyState, combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState, notePreyAttacker, tickGrazeHeal } from './prey';
+import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.0;
@@ -48,6 +49,8 @@ interface Cow {
   prey: PreyState;
   id: string;
   name: string;
+  personalityBias: Float32Array;
+  temperature: number;
 }
 
 interface MooBubble {
@@ -319,9 +322,18 @@ export class CowHerd implements HoldableProvider, PreyProvider {
       prey: makePreyState(120),       // cows are tanky
       id: `cow-${this.cows.length + 1}`,
       name: 'Cow',
+      personalityBias: (() => {
+        const b = new Float32Array(INTENT_COUNT);
+        b[Intent.Heal] = 0.6 + Math.random() * 0.4;   // cows like to graze
+        b[Intent.Flee] = (Math.random() - 0.4) * 0.3;
+        return b;
+      })(),
+      temperature: 0.7 + Math.random() * 0.5,
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = cow.yaw;
+    parts.group.userData.policyAgentId = cow.id;
+    parts.group.userData.policyArchetype = 'cow';
     this.group.add(parts.group);
     this.cows.push(cow);
   }
@@ -356,6 +368,34 @@ export class CowHerd implements HoldableProvider, PreyProvider {
     }
   }
 
+  getPolicyAgents(): PolicyAgentRef[] {
+    return this.cows.map(c => this.makePolicyAgent(c));
+  }
+
+  private makePolicyAgent(c: Cow): PolicyAgentRef {
+    return {
+      id: c.id,
+      team: 'prey',
+      archetype: 'cow',
+      size: COW_RADIUS,
+      personalityBias: c.personalityBias,
+      temperature: c.temperature,
+      get alive() { return !c.prey.dead && !c.held; },
+      get hp() { return c.prey.hp; },
+      get maxHp() { return c.prey.maxHp; },
+      get status() { return 0 as 0 | 1 | 2; },
+      get pos() { return { x: c.pos.x, z: c.pos.z }; },
+      get attackerId() { return c.prey.lastAttackerId; },
+      applyIntent(intent, focus, ctx) {
+        applyIntentToPreyState(
+          c.prey, intent as 0|1|2|3|4, focus,
+          () => null,
+          (id) => ctx?.resolveAttacker?.(id) ?? null,
+        );
+      },
+    };
+  }
+
   findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
     let best: Cow | null = null;
     let bestSq = maxDist * maxDist;
@@ -386,6 +426,7 @@ export class CowHerd implements HoldableProvider, PreyProvider {
         c.prey.hp -= amount;
         c.prey.lastHitAt = performance.now();
         emitDamageSplat(c.parts.group, amount);
+        notePreyAttacker(c.prey, attacker);
         if (attacker?.alive) c.prey.combatTarget = attacker;
         if (c.prey.hp <= 0) {
           c.prey.hp = 0;
@@ -494,6 +535,13 @@ export class CowHerd implements HoldableProvider, PreyProvider {
   }
 
   private updateCow(cow: Cow, delta: number): void {
+    // Brain-driven graze regen: if the policy is holding Heal, slowly heal
+    // and force a grazing pause so the cow doesn't keep wandering / fighting.
+    const grazed = tickGrazeHeal(cow.prey, delta, 5);
+    if (grazed > 0) emitHealSplat(cow.parts.group, grazed);
+    if (cow.prey.grazingUntil > performance.now()) {
+      cow.pauseTimer = Math.max(cow.pauseTimer, 0.3);
+    }
     this.updateCombat(cow, delta);
     const moving = cow.pauseTimer <= 0;
 

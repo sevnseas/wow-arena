@@ -9,7 +9,8 @@ import * as THREE from 'three';
 import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
+import { applyIntentToPreyState, combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState, notePreyAttacker, tickGrazeHeal } from './prey';
+import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.6;
@@ -48,6 +49,8 @@ interface Dog {
   prey: PreyState;
   id: string;
   name: string;
+  personalityBias: Float32Array;
+  temperature: number;
 }
 
 function buildDogMesh(): DogParts {
@@ -198,9 +201,18 @@ export class DogPack implements HoldableProvider, PreyProvider {
       prey: makePreyState(55),
       id: `dog-${this.dogs.length + 1}`,
       name: 'Dog',
+      personalityBias: (() => {
+        const b = new Float32Array(INTENT_COUNT);
+        // Dogs lean toward attacking predators who threaten the herd.
+        b[Intent.Attack] = 0.25 + Math.random() * 0.4;
+        return b;
+      })(),
+      temperature: 0.7 + Math.random() * 0.6,
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = dog.yaw;
+    parts.group.userData.policyAgentId = dog.id;
+    parts.group.userData.policyArchetype = 'dog';
     this.group.add(parts.group);
     this.dogs.push(dog);
   }
@@ -226,6 +238,34 @@ export class DogPack implements HoldableProvider, PreyProvider {
 
   setColliders(colliders: Collider[]): void {
     this.colliders = colliders;
+  }
+
+  getPolicyAgents(): PolicyAgentRef[] {
+    return this.dogs.map(d => this.makePolicyAgent(d));
+  }
+
+  private makePolicyAgent(d: Dog): PolicyAgentRef {
+    return {
+      id: d.id,
+      team: 'predator',
+      archetype: 'dog',
+      size: DOG_RADIUS,
+      personalityBias: d.personalityBias,
+      temperature: d.temperature,
+      get alive() { return !d.prey.dead && !d.held; },
+      get hp() { return d.prey.hp; },
+      get maxHp() { return d.prey.maxHp; },
+      get status() { return 0 as 0 | 1 | 2; },
+      get pos() { return { x: d.pos.x, z: d.pos.z }; },
+      get attackerId() { return d.prey.lastAttackerId; },
+      applyIntent(intent, focus, ctx) {
+        applyIntentToPreyState(
+          d.prey, intent as 0|1|2|3|4, focus,
+          () => null,
+          (id) => ctx?.resolveAttacker?.(id) ?? null,
+        );
+      },
+    };
   }
 
   findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
@@ -263,6 +303,7 @@ export class DogPack implements HoldableProvider, PreyProvider {
         dog.prey.hp -= amount;
         dog.prey.lastHitAt = performance.now();
         emitDamageSplat(dog.parts.group, amount);
+        notePreyAttacker(dog.prey, attacker);
         if (attacker?.alive) dog.prey.combatTarget = attacker;
         if (dog.prey.hp <= 0) {
           dog.prey.hp = 0;
@@ -323,6 +364,11 @@ export class DogPack implements HoldableProvider, PreyProvider {
   }
 
   private updateDog(dog: Dog, delta: number): void {
+    const grazed = tickGrazeHeal(dog.prey, delta, 5);
+    if (grazed > 0) emitHealSplat(dog.parts.group, grazed);
+    if (dog.prey.grazingUntil > performance.now()) {
+      dog.pauseTimer = Math.max(dog.pauseTimer, 0.3);
+    }
     this.updateCombat(dog, delta);
     const moving = dog.pauseTimer <= 0;
 

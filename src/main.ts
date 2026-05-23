@@ -47,6 +47,7 @@ import { Atmosphere } from './atmosphere';
 import type { PreyProvider } from './prey';
 import { BasicGameEntity, GameEntity, GameEntityRegistry, RefGameEntity } from './game-entity';
 import { MutantPredator } from './mutant-predator';
+import { loadPolicyRegistry, PolicyDriver } from './rl';
 
 // ============================================================================
 // Character Factory
@@ -112,6 +113,7 @@ interface GameState {
   atmosphere: Atmosphere;
   livingProviders: PreyProvider[];
   entityRegistry: GameEntityRegistry;
+  policyDriver: PolicyDriver | null;
 
   // Phase 4: Network state
   mode: GameMode;
@@ -918,6 +920,7 @@ async function init(): Promise<GameState> {
     atmosphere: undefined as unknown as Atmosphere,
     livingProviders: [],
     entityRegistry,
+    policyDriver: null,
   };
   liveState = state;
 
@@ -1006,7 +1009,37 @@ async function init(): Promise<GameState> {
   setupInput(state);
   updateActionBar(state);
 
+  // Trained RL policies drive the high-level intentions for every animal
+  // when available. The hand-written state machines remain the algorithmic
+  // Tier-2 engine; the brain only picks Attack/Flee/Idle/Heal every ~0.5s.
+  // Disable with `?policy=0` in the URL.
+  const useBrain = new URLSearchParams(location.search).get('policy') !== '0';
+  if (useBrain) {
+    const baseUrl = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
+    const base = `${baseUrl.replace(/\/$/, '')}/policies`;
+    const registry = await loadPolicyRegistry(base);
+    if (registry) {
+      state.policyDriver = new PolicyDriver(registry);
+      state.policyDriver.setAgents(collectPolicyAgents(state));
+      state.editor.setPolicyDriver(state.policyDriver);
+      console.log('[rl] trained per-archetype policies driving wolves, rabbits, cats, dogs, cows, werewolf');
+    } else {
+      console.log('[rl] no trained policies found at', base, '— using built-in AI. Run `npm run train`.');
+    }
+  }
+
   return state;
+}
+
+function collectPolicyAgents(state: GameState) {
+  return [
+    ...state.wolves.getPolicyAgents(),
+    ...state.rabbits.getPolicyAgents(),
+    ...state.cats.getPolicyAgents(),
+    ...state.dogs.getPolicyAgents(),
+    ...state.cows.getPolicyAgents(),
+    ...state.mutantPredator.getPolicyAgents(),
+  ];
 }
 
 // ============================================================================
@@ -1145,6 +1178,10 @@ function animateStandalone(state: GameState, delta: number): void {
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
   state.mutantPredator.update(delta);
+  if (state.policyDriver) {
+    state.policyDriver.setAgents(collectPolicyAgents(state));
+    state.policyDriver.update(delta);
+  }
   syncLivingTargetables(state);
   state.hpBars.update();
   state.colliderDebug.update();
@@ -1221,6 +1258,10 @@ function animateMultiplayer(state: GameState, delta: number): void {
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
   state.mutantPredator.update(delta);
+  if (state.policyDriver) {
+    state.policyDriver.setAgents(collectPolicyAgents(state));
+    state.policyDriver.update(delta);
+  }
   syncLivingTargetables(state);
   state.hpBars.update();
   state.colliderDebug.update();

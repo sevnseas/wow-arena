@@ -39,7 +39,8 @@ interface RabbitParts {
 type RabbitState = 'hop' | 'rest' | 'stopped';
 
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
+import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState, notePreyAttacker, tickGrazeHeal } from './prey';
+import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
 
 interface Rabbit {
   parts: RabbitParts;
@@ -55,6 +56,8 @@ interface Rabbit {
   prey: PreyState;
   id: string;
   name: string;
+  personalityBias: Float32Array;
+  temperature: number;
 }
 
 function buildRabbitMesh(): RabbitParts {
@@ -213,9 +216,19 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
       prey: makePreyState(30),
       id: `rabbit-${this.rabbits.length + 1}`,
       name: 'Rabbit',
+      personalityBias: (() => {
+        const b = new Float32Array(INTENT_COUNT);
+        // Rabbits get a flee bias by default — variance gives some bolder bunnies.
+        b[Intent.Flee] = 0.5 + Math.random() * 0.6;
+        b[Intent.Idle] = (Math.random() - 0.3) * 0.5;
+        return b;
+      })(),
+      temperature: 0.6 + Math.random() * 0.7,
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = rabbit.yaw;
+    parts.group.userData.policyAgentId = rabbit.id;
+    parts.group.userData.policyArchetype = 'rabbit';
     this.group.add(parts.group);
     this.rabbits.push(rabbit);
   }
@@ -235,6 +248,60 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
       this.spawnRabbit();
       this.respawnTimer = 4 + Math.random() * 4;
     }
+  }
+
+  /**
+   * Adapters for the RL PolicyDriver. The brain selects Flee/Idle; the
+   * existing hop/scare state machine executes the result.
+   */
+  getPolicyAgents(): PolicyAgentRef[] {
+    return this.rabbits.map(r => this.makePolicyAgent(r));
+  }
+
+  private makePolicyAgent(r: Rabbit): PolicyAgentRef {
+    return {
+      id: r.id,
+      team: 'prey',
+      archetype: 'rabbit',
+      size: RABBIT_RADIUS,
+      personalityBias: r.personalityBias,
+      temperature: r.temperature,
+      get alive() { return !r.prey.dead && !r.held; },
+      get hp() { return r.prey.hp; },
+      get maxHp() { return r.prey.maxHp; },
+      get status() { return 0 as 0 | 1 | 2; },
+      get pos() { return { x: r.pos.x, z: r.pos.z }; },
+      get attackerId() { return r.prey.lastAttackerId; },
+      applyIntent(intent: Intent, focus, ctx) {
+        if (r.prey.dead || r.held) return;
+        // Flee with attacker-priority: actual damager wins over generic focus.
+        if (intent === Intent.Flee) {
+          let fromX = focus?.pos.x ?? r.pos.x + 1;
+          let fromZ = focus?.pos.z ?? r.pos.z;
+          if (r.prey.lastAttackerId) {
+            const att = ctx?.resolveAttacker?.(r.prey.lastAttackerId);
+            if (att) { fromX = att.pos.x; fromZ = att.pos.z; }
+          }
+          r.prey.fleeUntil = performance.now() + 1100;
+          r.prey.fleeFromX = fromX;
+          r.prey.fleeFromZ = fromZ;
+          r.prey.grazingUntil = 0;
+          return;
+        }
+        if (intent === Intent.Heal) {
+          // Stand-and-graze: clear flee, mark grazing window so tickGrazeHeal regens.
+          r.prey.fleeUntil = 0;
+          r.prey.grazingUntil = performance.now() + 1500;
+          return;
+        }
+        if (intent === Intent.Idle) {
+          r.prey.fleeUntil = 0;
+          r.prey.grazingUntil = 0;
+          return;
+        }
+        // Attack / CC → no-op for rabbits; they let foraging continue.
+      },
+    };
   }
 
   findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
@@ -267,6 +334,7 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
         r.prey.hp -= amount;
         r.prey.lastHitAt = performance.now();
         emitDamageSplat(r.parts.group, amount);
+        notePreyAttacker(r.prey, attacker);
         if (attacker?.alive) r.prey.combatTarget = attacker;
         if (r.prey.hp <= 0) {
           r.prey.hp = 0;
@@ -355,6 +423,8 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
 
   private updateRabbit(r: Rabbit, delta: number): void {
     const now = performance.now();
+    const grazed = tickGrazeHeal(r.prey, delta, 4);
+    if (grazed > 0) emitHealSplat(r.parts.group, grazed);
     this.updateCombat(r, delta);
 
     // Flee: if a predator scared us recently, point target directly away

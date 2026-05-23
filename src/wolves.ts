@@ -16,6 +16,7 @@ import { getTerrainHeight } from './terrain';
 import type { Collider } from './arena';
 import { combatContactRange, emitDamageSplat, emitHealSplat, maintainCombatSpacing, type CombatTargetRef, type PreyRef, type PreyProvider } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
+import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
 
 const WALK_SPEED = 1.8;
 const HUNT_SPEED = 4.0;
@@ -23,7 +24,12 @@ const TURN_RATE = 3.0;
 const REACH_RADIUS = 1.0;
 const PROWL_RADIUS = 6;          // wander radius around the den when idle
 const SCENT_RADIUS = 18;         // how far a wolf can smell prey
-const ATTACK_DAMAGE = 8;
+/**
+ * Base bite damage. Final damage scales with attacker size — a bigger wolf
+ * hits proportionally harder (see entity-policies.md / RL env, which uses
+ * the same dmg = base * size rule for consistency with training).
+ */
+const ATTACK_DAMAGE_BASE = 16; // base * WOLF_RADIUS (0.5) ≈ 8, matches prior tuning
 const ATTACK_COOLDOWN = 1.4;     // seconds between bites
 const FEED_TIME = 3.0;           // seconds after a kill before resuming patrol
 const SCARE_RADIUS = 6;          // wolves passing close scare rabbits even without attacking
@@ -65,6 +71,11 @@ interface Wolf {
   name: string;
   aggro: Map<string, { ref: CombatTargetRef; score: number }>;
   prowlCenter: THREE.Vector3;
+  /** Per-individual policy overrides (set when running under PolicyDriver). */
+  personalityBias: Float32Array;
+  temperature: number;
+  /** Brain-driven intent override; null = use built-in state machine. */
+  brainIntent: 'idle' | 'attack' | 'flee' | null;
 }
 
 function buildWolfMesh(): WolfParts {
@@ -303,10 +314,23 @@ export class WolfPack implements PreyProvider {
       name: 'Wolf',
       aggro: new Map(),
       prowlCenter: pos.clone(),
+      personalityBias: (() => {
+        // Subtle per-wolf personality: mild attack bias + jitter so each
+        // wolf in the pack behaves a little differently (entity-policies §2).
+        const b = new Float32Array(INTENT_COUNT);
+        b[Intent.Attack] = 0.4 + Math.random() * 0.4;
+        b[Intent.Idle] = (Math.random() - 0.5) * 0.4;
+        b[Intent.Flee] = (Math.random() - 0.5) * 0.3;
+        return b;
+      })(),
+      temperature: 0.7 + Math.random() * 0.8,
+      brainIntent: null,
     };
     wolf.target.copy(this.pickWanderTarget(wolf));
     parts.group.position.copy(pos);
     parts.group.rotation.y = wolf.yaw;
+    parts.group.userData.policyAgentId = wolf.id;
+    parts.group.userData.policyArchetype = 'wolf';
     this.group.add(parts.group);
     this.wolves.push(wolf);
   }
@@ -341,6 +365,111 @@ export class WolfPack implements PreyProvider {
 
   setColliders(colliders: Collider[]): void {
     this.colliders = colliders;
+  }
+
+  /**
+   * Per-wolf adapter for the RL PolicyDriver. The brain picks an Intent
+   * every ~0.5s and we map it onto the existing state machine — keeping
+   * pathing and combat timing algorithmic (Tier 2), only routing the
+   * high-level "attack / idle / flee" choice through the network.
+   */
+  getPolicyAgents(): PolicyAgentRef[] {
+    return this.wolves.map(w => this.makePolicyAgent(w));
+  }
+
+  private makePolicyAgent(w: Wolf): PolicyAgentRef {
+    const self = this;
+    return {
+      id: w.id,
+      team: 'predator',
+      archetype: 'wolf',
+      size: WOLF_RADIUS,
+      personalityBias: w.personalityBias,
+      temperature: w.temperature,
+      get alive() { return !w.dead; },
+      get hp() { return w.hp; },
+      get maxHp() { return w.maxHp; },
+      get status() { return 0 as 0 | 1 | 2; },
+      get pos() { return { x: w.pos.x, z: w.pos.z }; },
+      get attackerId() { return null; },
+      applyIntent(intent: Intent, focus, ctx) {
+        if (w.dead) return;
+        switch (intent) {
+          case Intent.Attack: {
+            w.brainIntent = 'attack';
+            // Latch onto the brain-chosen focus if it's a valid huntable.
+            if (focus && focus.team !== 'predator') {
+              const ref = self.resolvePreyByPos(focus.pos.x, focus.pos.z, focus.id);
+              if (ref) {
+                w.prey = ref;
+                self.addAggro(w, ref, 5);
+                w.state = w.state === 'attack' ? 'attack' : 'hunt';
+              }
+            }
+            break;
+          }
+          case Intent.Flee: {
+            w.brainIntent = 'flee';
+            // Prefer fleeing away from whoever's actively damaging this wolf
+            // (resolved via ctx) — falls back to focus if there's no attacker.
+            // The brain knows it's hurt; the engine just needs the right vector.
+            const last = w.lastHitAt > 0 ? null : null; // wolves don't track attackerId yet
+            let from = focus;
+            if (last) from = last;
+            if (from) {
+              const tx = w.pos.x - (from.pos.x - w.pos.x);
+              const tz = w.pos.z - (from.pos.z - w.pos.z);
+              w.target.set(tx, 0, tz);
+              w.state = 'return';
+            }
+            void ctx;
+            break;
+          }
+          case Intent.Heal: {
+            // "Hide" — drop combat target, wander away, regen if not hit.
+            w.brainIntent = 'idle';
+            w.prey = null;
+            w.aggro.clear();
+            if (w.state === 'hunt' || w.state === 'attack') {
+              w.state = 'wander';
+              w.target.copy(self.pickWanderTarget(w));
+            }
+            // Regen pulse (tickGrazeHeal would need a PreyState; wolves use
+            // their own hp field, so heal inline when off-combat for ≥2s).
+            const now = performance.now();
+            if (now - w.lastHitAt > 2000 && w.hp < w.maxHp) {
+              w.hp = Math.min(w.maxHp, w.hp + 4 * 0.5); // ~4 hp/sec at 0.5s decisions
+            }
+            break;
+          }
+          case Intent.Idle:
+          default: {
+            w.brainIntent = 'idle';
+            w.prey = null;
+            w.aggro.clear();
+            if (w.state === 'hunt' || w.state === 'attack') {
+              w.state = 'wander';
+              w.target.copy(self.pickWanderTarget(w));
+            }
+            break;
+          }
+        }
+      },
+    };
+  }
+
+  private resolvePreyByPos(x: number, z: number, id: string): CombatTargetRef | null {
+    // Tiny lookup across providers — match by id or by tight position window.
+    for (const prov of this.preyProviders) {
+      let found: CombatTargetRef | null = null;
+      prov.forEachPrey(ref => {
+        if (found || !ref.alive) return;
+        if (ref.id === id) { found = ref; return; }
+        if (Math.hypot(ref.pos.x - x, ref.pos.z - z) < 0.5) found = ref;
+      });
+      if (found) return found;
+    }
+    return null;
   }
 
   /**
@@ -530,8 +659,9 @@ export class WolfPack implements PreyProvider {
         // Bite on cooldown
         if (wolf.attackTimer <= 0) {
           const wolfRef = this.makePreyRef(wolf);
-          const killed = wolf.prey.damage(ATTACK_DAMAGE, wolfRef);
-          this.addAggro(wolf, wolf.prey, ATTACK_DAMAGE);
+          const damage = ATTACK_DAMAGE_BASE * WOLF_RADIUS;
+          const killed = wolf.prey.damage(damage, wolfRef);
+          this.addAggro(wolf, wolf.prey, damage);
           wolf.attackTimer = ATTACK_COOLDOWN;
           // Jaw snap visual
           wolf.parts.jaw.rotation.x = -0.6;
