@@ -15,7 +15,7 @@
  * archetypes learn against the final mix). Earlier stages train the
  * policies but their snapshots aren't candidates for deployment.
  *
- * Run: npm run train:ecosystem            # default 800 eps / stage
+ * Run: npm run train:ecosystem            # default 1500 eps / stage
  *      npm run train:ecosystem 2000        # longer
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -29,7 +29,7 @@ import {
 import { Rng } from '../src/rl/rng.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const epsPerStage = Number(process.argv[2] ?? 800);
+const epsPerStage = Number(process.argv[2] ?? 1500);
 const outDir = resolve(here, '..', 'public', 'policies-rl4');
 mkdirSync(outDir, { recursive: true });
 
@@ -58,10 +58,11 @@ const rngR = new Rng(7);
 const rngW = new Rng(13);
 const rabbitPolicy = new Policy4(cfg, rngR);
 const wolfPolicy = new Policy4(cfg, rngW);
-let bestRabbit = clone(rabbitPolicy), bestRabbitMA = -Infinity, bestRabbitEp = -1;
-let bestWolf = clone(wolfPolicy), bestWolfMA = -Infinity, bestWolfEp = -1;
+let bestRabbit = clone(rabbitPolicy), bestRabbitScore = -Infinity, bestRabbitEp = -1;
+let bestWolf = clone(wolfPolicy), bestWolfScore = -Infinity, bestWolfEp = -1;
 const histRabbit = [], maRabbit = [];
 const histWolf = [], maWolf = [];
+const stageSummaries = [];
 
 console.log(`=== ECOSYSTEM TRAINING · ${epsPerStage} eps/stage ===`);
 
@@ -74,8 +75,10 @@ for (let si = 0; si < STAGES.length; si++) {
   histWolf.push(...result.histW);
   maRabbit.push(...result.maR);
   maWolf.push(...result.maW);
-  console.log(`   end-of-stage rabbit ma50 ${result.bestRMa.toFixed(1)} · wolf ma50 ${result.bestWMa.toFixed(1)}`);
-  console.log(`   stage births: ${result.births.rabbit} rabbit / ${result.births.wolf} wolf · stage kills: ${result.kills}`);
+  stageSummaries.push(result.summary);
+  console.log(`   end-of-stage rabbit score50 ${result.bestRScore.toFixed(1)} · wolf score50 ${result.bestWScore.toFixed(1)}`);
+  console.log(`   stage births/min: R ${result.summary.rabbitBirthsPerMin.toFixed(1)} / W ${result.summary.wolfBirthsPerMin.toFixed(1)} · kill-rate ${result.summary.wolfKillRate.toFixed(2)}`);
+  console.log(`   mean lifetime: R ${result.summary.meanRabbitLifetime.toFixed(1)}s · W ${result.summary.meanWolfLifetime.toFixed(1)}s`);
 }
 
 writeFileSync(resolve(outDir, 'rabbit.json'), serializePolicy4(bestRabbit));
@@ -88,17 +91,17 @@ writeFileSync(resolve(outDir, 'wolf.history.csv'),
 const meta = (arch, bestMa, bestEp, hist) => ({
   archetype: arch, trainedAt: new Date().toISOString(),
   episodesPerStage: epsPerStage,
-  stages: STAGES.map(s => ({ ...s })),
-  bestEpisodeMA50: bestMa,
+  stages: STAGES.map((s, i) => ({ ...s, metrics: stageSummaries[i] })),
+  bestMetricScore50: bestMa,
   bestStage: 'S5-eco',
   bestEpisodeIndex: bestEp,
-  policyConfig: cfg,
+  policyConfig: arch === 'rabbit' ? bestRabbit.cfg : bestWolf.cfg,
   historyLength: hist.length,
 });
-writeFileSync(resolve(outDir, 'rabbit.meta.json'), JSON.stringify(meta('rabbit', bestRabbitMA, bestRabbitEp, histRabbit), null, 2));
-writeFileSync(resolve(outDir, 'wolf.meta.json'),   JSON.stringify(meta('wolf',   bestWolfMA,   bestWolfEp,   histWolf),   null, 2));
-console.log(`\nwrote rabbit.json (best ma50 ${bestRabbitMA.toFixed(1)})`);
-console.log(`wrote wolf.json (best ma50 ${bestWolfMA.toFixed(1)})`);
+writeFileSync(resolve(outDir, 'rabbit.meta.json'), JSON.stringify(meta('rabbit', bestRabbitScore, bestRabbitEp, histRabbit), null, 2));
+writeFileSync(resolve(outDir, 'wolf.meta.json'),   JSON.stringify(meta('wolf',   bestWolfScore,   bestWolfEp,   histWolf),   null, 2));
+console.log(`\nwrote rabbit.json (best S5 metric score50 ${bestRabbitScore.toFixed(1)})`);
+console.log(`wrote wolf.json (best S5 metric score50 ${bestWolfScore.toFixed(1)})`);
 console.log(asciiPlot('rabbit', maRabbit));
 console.log(asciiPlot('wolf',   maWolf));
 
@@ -110,14 +113,19 @@ function runStage(stage, isFinal) {
   const decisionInterval = 5;
   const batchSize = 8;
   const histR = [], histW = [], maR = [], maW = [];
+  const metricR = [], metricW = [];
+  const metricWinR = [], metricWinW = [];
   const sumWinR = [], sumWinW = [];
   let sumR = 0, sumW = 0;
-  let bestRMa = -Infinity, bestWMa = -Infinity;
+  let metricSumR = 0, metricSumW = 0;
+  let bestRScore = -Infinity, bestWScore = -Infinity;
   let batchR = [], batchW = [];
   const births = { rabbit: 0, wolf: 0 };
   let kills = 0;
+  const lifetimes = { rabbit: [], wolf: [] };
   const trainsRabbit = stage.learners.includes('rabbit');
   const trainsWolf = stage.learners.includes('wolf');
+  const episodeSec = stepsPerEp * createEnv4().env.config.dt;
 
   for (let ep = 0; ep < epsPerStage; ep++) {
     const env = createEnv4({ bounds: stage.bounds, visionRadius: Math.max(6, stage.bounds * 1.4) }, 7000 + ep);
@@ -166,6 +174,8 @@ function runStage(stage, isFinal) {
     const trajW = [];
 
     let rabbitReturn = 0, wolfReturn = 0;
+    let epRabbitBirths = 0, epWolfBirths = 0, epKills = 0;
+    const epLifetimes = { rabbit: [], wolf: [] };
     for (let step = 0; step < stepsPerEp; step++) {
       if (step % decisionInterval === 0) {
         for (const e of env.entities) {
@@ -186,11 +196,33 @@ function runStage(stage, isFinal) {
       step4(env, env.env.config.dt);
       // Tally stage metrics from events.
       for (const ev of env.events) {
-        if (ev.type === 'born') births[ev.archetype === 'rabbit' ? 'rabbit' : 'wolf']++;
-        if (ev.type === 'died' && ev.cause === 'predator') kills++;
+        if (ev.type === 'born') {
+          births[ev.archetype === 'rabbit' ? 'rabbit' : 'wolf']++;
+          if (ev.archetype === 'rabbit') epRabbitBirths++;
+          if (ev.archetype === 'wolf') epWolfBirths++;
+        }
+        if (ev.type === 'died') {
+          const dead = env.entities.find(e => e.id === ev.entityId);
+          if (dead?.archetype === 'rabbit' || dead?.archetype === 'wolf') {
+            lifetimes[dead.archetype].push(dead.age);
+            epLifetimes[dead.archetype].push(dead.age);
+          }
+          if (ev.cause === 'predator') { kills++; epKills++; }
+        }
       }
       clearEcosystemEvents(env);
     }
+    for (const e of env.entities) {
+      if (!e.alive) continue;
+      if (e.archetype === 'rabbit' || e.archetype === 'wolf') {
+        lifetimes[e.archetype].push(e.age);
+        epLifetimes[e.archetype].push(e.age);
+      }
+    }
+    const meanRabbitLife = mean(epLifetimes.rabbit);
+    const meanWolfLife = mean(epLifetimes.wolf);
+    const rabbitScore = meanRabbitLife + (epRabbitBirths / episodeSec) * 60 * 10;
+    const wolfScore = epKills + epWolfBirths * 3 + meanWolfLife / 30;
 
     if (trajR.length > 0) {
       trajR[trajR.length - 1].episodeEnd = true;
@@ -200,9 +232,13 @@ function runStage(stage, isFinal) {
       if (sumWinR.length > 50) sumR -= sumWinR.shift();
       const ma = sumR / sumWinR.length;
       maR.push(ma);
-      if (sumWinR.length === 50 && ma > bestRMa) {
-        bestRMa = ma;
-        if (isFinal && ma > bestRabbitMA) { bestRabbitMA = ma; bestRabbit = clone(rabbitPolicy); bestRabbitEp = histR.length - 1; }
+      metricSumR += rabbitScore; metricWinR.push(rabbitScore);
+      if (metricWinR.length > 50) metricSumR -= metricWinR.shift();
+      const score50 = metricSumR / metricWinR.length;
+      metricR.push(score50);
+      if (score50 > bestRScore) {
+        bestRScore = score50;
+        if (isFinal && score50 > bestRabbitScore) { bestRabbitScore = score50; bestRabbit = clone(rabbitPolicy); bestRabbitEp = histR.length - 1; }
       }
       if (batchR.length >= batchSize) { reinforceUpdate4(rabbitPolicy, batchR.flat()); batchR = []; }
     }
@@ -214,9 +250,13 @@ function runStage(stage, isFinal) {
       if (sumWinW.length > 50) sumW -= sumWinW.shift();
       const ma = sumW / sumWinW.length;
       maW.push(ma);
-      if (sumWinW.length === 50 && ma > bestWMa) {
-        bestWMa = ma;
-        if (isFinal && ma > bestWolfMA) { bestWolfMA = ma; bestWolf = clone(wolfPolicy); bestWolfEp = histW.length - 1; }
+      metricSumW += wolfScore; metricWinW.push(wolfScore);
+      if (metricWinW.length > 50) metricSumW -= metricWinW.shift();
+      const score50 = metricSumW / metricWinW.length;
+      metricW.push(score50);
+      if (score50 > bestWScore) {
+        bestWScore = score50;
+        if (isFinal && score50 > bestWolfScore) { bestWolfScore = score50; bestWolf = clone(wolfPolicy); bestWolfEp = histW.length - 1; }
       }
       if (batchW.length >= batchSize) { reinforceUpdate4(wolfPolicy, batchW.flat()); batchW = []; }
     }
@@ -227,10 +267,22 @@ function runStage(stage, isFinal) {
   }
   if (batchR.length > 0) reinforceUpdate4(rabbitPolicy, batchR.flat());
   if (batchW.length > 0) reinforceUpdate4(wolfPolicy, batchW.flat());
-  return { histR, histW, maR, maW, bestRMa, bestWMa, births, kills };
+  const totalMinutes = (epsPerStage * episodeSec) / 60;
+  const summary = {
+    rabbitBirthsPerMin: births.rabbit / totalMinutes,
+    wolfBirthsPerMin: births.wolf / totalMinutes,
+    wolfKillRate: stage.wolves > 0 ? kills / (epsPerStage * stage.wolves) : 0,
+    meanRabbitLifetime: mean(lifetimes.rabbit),
+    meanWolfLifetime: mean(lifetimes.wolf),
+    births,
+    kills,
+  };
+  return { histR, histW, maR, maW, metricR, metricW, bestRScore, bestWScore, summary };
 }
 
 function clone(p) { return deserializePolicy4(serializePolicy4(p)); }
+
+function mean(xs) { return xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0; }
 
 function asciiPlot(label, values) {
   if (values.length === 0) return `(no data for ${label})`;
