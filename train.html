@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RL4 tick-speed trainer</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#0a0d18; color:#fff; font-family:'Segoe UI',Arial,sans-serif; overflow:hidden; }
+    #app { display:grid; grid-template-columns: 1fr 360px; height:100vh; }
+    #canvas-wrap { position:relative; background:#141622; }
+    #env-canvas { display:block; }
+    #env-label {
+      position:absolute; top:10px; left:10px; padding:6px 10px;
+      background:rgba(0,0,0,0.65); border:1px solid #333; border-radius:4px;
+      font-family:monospace; font-size:12px; color:#9af0c0;
+    }
+    #sidebar {
+      background:#0d1322; border-left:1px solid #222;
+      padding:14px; overflow-y:auto;
+    }
+    h2 { color:#9af0c0; font-size:14px; margin-bottom:10px; font-family:monospace; }
+    h3 { color:#888; font-size:11px; margin:10px 0 4px; text-transform:uppercase; letter-spacing:1px; }
+    .row { display:flex; gap:8px; font-family:monospace; font-size:12px; margin:2px 0; }
+    .lbl { color:#888; min-width:90px; }
+    .val { color:#fff; }
+    .stage-row { display:flex; gap:6px; align-items:center; font-family:monospace; font-size:10px; margin:2px 0; }
+    .stage-row .name { min-width:60px; color:#888; }
+    .stage-row.active .name { color:#9af0c0; font-weight:bold; }
+    .stage-row .bar { flex:1; background:#202028; border:1px solid #333; height:8px; position:relative; border-radius:2px; overflow:hidden; }
+    .stage-row .fill { position:absolute; left:0; top:0; bottom:0; background:#66e0ff; }
+    .stage-row .pct { color:#ccc; min-width:32px; text-align:right; }
+    #plot, #pen-plot { display:block; width:100%; height:120px; background:#0a0d18; border:1px solid #222; margin-top:4px; }
+    #controls { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+    button {
+      padding:4px 10px; background:#1a2230; border:1px solid #555;
+      color:#fff; cursor:pointer; border-radius:3px; font-size:11px;
+    }
+    button:hover { background:#2a3240; }
+    button.active { background:#3a5040; border-color:#9af0c0; color:#9af0c0; }
+    #log {
+      font-family:monospace; font-size:10px; color:#7fd0ff;
+      background:#0a0d18; border:1px solid #222; padding:6px; height:120px;
+      overflow:hidden; margin-top:4px; line-height:1.4;
+    }
+    #picker { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:8px; }
+    #picker a { color:#9af0c0; text-decoration:none; padding:3px 8px; font-size:11px; background:#1a2230; border:1px solid #333; border-radius:3px; }
+    #picker a.active { background:#264; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="canvas-wrap">
+      <canvas id="env-canvas"></canvas>
+      <div id="env-label">tick env4 sim · agent=wolf · stage=loading…</div>
+    </div>
+    <div id="sidebar">
+      <h2>RL4 trainer · tick speed</h2>
+
+      <div id="picker">
+        <a href="?a=wolf" data-a="wolf">wolf</a>
+        <a href="?a=cat" data-a="cat">cat</a>
+        <a href="?a=werewolf" data-a="werewolf">werewolf</a>
+      </div>
+
+      <div id="controls">
+        <button id="btn-pause">⏸ pause</button>
+        <button id="btn-1x">1×</button>
+        <button id="btn-5x">5×</button>
+        <button id="btn-20x">20×</button>
+        <button id="btn-reset">↻ reset</button>
+        <button id="btn-export">💾 export policy</button>
+      </div>
+
+      <h3>progress</h3>
+      <div class="row"><span class="lbl">episode</span><span class="val" id="m-ep">0</span></div>
+      <div class="row"><span class="lbl">stage ep</span><span class="val" id="m-stage-ep">0 / 600</span></div>
+      <div class="row"><span class="lbl">eps/sec</span><span class="val" id="m-eps">0</span></div>
+
+      <h3>last episode</h3>
+      <div class="row"><span class="lbl">return</span><span class="val" id="m-ret">—</span></div>
+      <div class="row"><span class="lbl">ma 50</span><span class="val" id="m-ma">—</span></div>
+      <div class="row"><span class="lbl">last action</span><span class="val" id="m-act">—</span></div>
+
+      <h3>return ma50 (current stage)</h3>
+      <canvas id="plot" width="320" height="120"></canvas>
+
+      <h3>curriculum</h3>
+      <div id="stage-list"></div>
+
+      <h3>events</h3>
+      <div id="log"></div>
+    </div>
+  </div>
+  <script type="module" src="/src/scenarios/train-tick-ui.ts"></script>
+</body>
+</html>

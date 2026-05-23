@@ -423,6 +423,120 @@ function updateHud(): void {
   `;
 }
 
+/** Minimap canvas — draws the exact observation vector the policy receives.
+ *  This is the smoking gun for "what does the network actually see?".
+ *  Concentric circles = vision radius / 2. Hero is the dot at center.
+ *  Other entities: red dot if enemy (team=1), green if ally, sized by HP.
+ *  Tail line shows the entity's velocity (cells 2,3 of the obs). The chosen
+ *  action arrow is overlaid in cyan so input ↔ output correspondence is
+ *  visible in one glance. */
+const miniCanvas = document.getElementById('minimap-canvas') as HTMLCanvasElement;
+const miniCtx = miniCanvas.getContext('2d')!;
+const miniLegend = document.getElementById('minimap-legend')!;
+
+function updateMinimap(): void {
+  const W = miniCanvas.width, H = miniCanvas.height;
+  miniCtx.fillStyle = '#0a0d18';
+  miniCtx.fillRect(0, 0, W, H);
+
+  const hero = world.hero;
+  const dec = driver?.getDecision(hero.id);
+  if (!dec || !driver) {
+    miniCtx.fillStyle = '#666';
+    miniCtx.font = '10px monospace';
+    miniCtx.fillText('(no decision yet)', 10, H / 2);
+    return;
+  }
+
+  // The observation is normalized by visionRadius in env4 (rel_x / visionR).
+  // Reading driver.cfg.visionRadius would couple to internals; just assume
+  // the default 18 — close enough for visualization since we don't rescale.
+  const cx = W / 2, cy = H / 2;
+  // Concentric circles at 25/50/75/100% of vision radius — sense of scale.
+  miniCtx.strokeStyle = '#222a3a';
+  for (let i = 1; i <= 4; i++) {
+    miniCtx.beginPath();
+    miniCtx.arc(cx, cy, (i / 4) * (W / 2 - 4), 0, Math.PI * 2);
+    miniCtx.stroke();
+  }
+  miniCtx.strokeStyle = '#1a2230';
+  miniCtx.beginPath(); miniCtx.moveTo(cx, 0); miniCtx.lineTo(cx, H); miniCtx.stroke();
+  miniCtx.beginPath(); miniCtx.moveTo(0, cy); miniCtx.lineTo(W, cy); miniCtx.stroke();
+
+  const archColors = ['#666', '#9c7', '#fcd', '#a96', '#c8a', '#cb8', '#f88'];
+
+  // Walk the 20 entity slots in the obs (7 features each).
+  const s = dec.state;
+  const FEAT = 7;
+  const N_SLOTS = 20;
+  let nVisible = 0;
+  for (let i = 0; i < N_SLOTS; i++) {
+    const base = i * FEAT;
+    const archCode = Math.round(s[base + 5] * 6);
+    if (archCode === 0) continue;
+    nVisible++;
+    const relX = s[base + 0];      // already normalized to [-1, 1]ish
+    const relZ = s[base + 1];
+    const velX = s[base + 2];
+    const velZ = s[base + 3];
+    const hp = s[base + 4];
+    const isEnemy = s[base + 6] > 0.5;
+    // Map normalized rel-pos to canvas. Note: env4 uses (x, z) world, +z
+    // = "forward" in scene. On the canvas we mirror y so +z renders up.
+    const px = cx + relX * (W / 2 - 4);
+    const py = cy - relZ * (H / 2 - 4);
+    // Velocity line.
+    miniCtx.strokeStyle = isEnemy ? 'rgba(255,128,128,0.5)' : 'rgba(160,255,160,0.4)';
+    miniCtx.beginPath();
+    miniCtx.moveTo(px, py);
+    miniCtx.lineTo(px + velX * 20, py - velZ * 20);
+    miniCtx.stroke();
+    // Entity dot, sized by HP.
+    const r = 3 + hp * 4;
+    miniCtx.fillStyle = isEnemy ? '#ff6666' : archColors[archCode];
+    miniCtx.beginPath();
+    miniCtx.arc(px, py, r, 0, Math.PI * 2);
+    miniCtx.fill();
+    miniCtx.strokeStyle = '#000';
+    miniCtx.stroke();
+    // Slot index — useful for matching against the obs feature dump.
+    miniCtx.fillStyle = '#000';
+    miniCtx.font = '8px monospace';
+    miniCtx.fillText(String(i), px - 2, py + 2);
+  }
+
+  // Hero dot.
+  miniCtx.fillStyle = '#9af0c0';
+  miniCtx.beginPath();
+  miniCtx.arc(cx, cy, 5, 0, Math.PI * 2);
+  miniCtx.fill();
+  miniCtx.strokeStyle = '#000';
+  miniCtx.stroke();
+
+  // Chosen action arrow — overlays the input so the eye can confirm
+  // "policy chose to move toward THAT dot".
+  if (isMovementAction(dec.action)) {
+    const v = actionToUnitVec(dec.action);
+    miniCtx.strokeStyle = '#66e0ff';
+    miniCtx.lineWidth = 2;
+    miniCtx.beginPath();
+    miniCtx.moveTo(cx, cy);
+    miniCtx.lineTo(cx + v.x * 30, cy - v.z * 30);
+    miniCtx.stroke();
+    miniCtx.lineWidth = 1;
+  } else {
+    // Ability — pulse a yellow ring at the hero.
+    miniCtx.strokeStyle = '#ffcc44';
+    miniCtx.lineWidth = 2;
+    miniCtx.beginPath();
+    miniCtx.arc(cx, cy, 10 + (Date.now() / 100 % 6), 0, Math.PI * 2);
+    miniCtx.stroke();
+    miniCtx.lineWidth = 1;
+  }
+
+  miniLegend.textContent = `${nVisible} entity slot${nVisible === 1 ? '' : 's'} active · 140-dim obs`;
+}
+
 function humanAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`;
@@ -470,6 +584,7 @@ function frame() {
   }
 
   updateHud();
+  updateMinimap();
   renderer.render(scene, camera);
 }
 frame();

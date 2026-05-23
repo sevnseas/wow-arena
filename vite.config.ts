@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         scenarios: resolve(__dirname, 'scenarios.html'),
+        train: resolve(__dirname, 'train.html'),
       },
     },
   },
