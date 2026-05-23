@@ -8,12 +8,10 @@
  *   public/policies-rl4/rabbit.json + rabbit.meta.json + rabbit.history.csv
  *   public/policies-rl4/wolf.json   + wolf.meta.json   + wolf.history.csv
  *
- * Each stage drops a fixed batch of episodes against the spawn rules
- * defined below. S1-S3 train rabbits, S4 trains wolves, and S5 trains both
- * policies inside one shared env. Best policy per archetype is the
- * trailing-MA50 best recorded during S5 (the only stage where both
- * archetypes learn against the final mix). Earlier stages train the
- * policies but their snapshots aren't candidates for deployment.
+ * Each stage starts in the smallest pen that can comfortably fit the
+ * requested entities and grass patches, then widens only after the recent
+ * lifecycle metric has flattened. Earlier stages train the policies but
+ * their snapshots aren't candidates for deployment.
  *
  * Run: npm run train:ecosystem            # default 1500 eps / stage
  *      npm run train:ecosystem 2000        # longer
@@ -44,13 +42,14 @@ const PHYS = {
  *  S2: rabbit + grass + age — adds lifespan + starvation pressure.
  *  S3: 2 rabbits + grass — partner reproduction unlocks.
  *  S4: 1 wolf + 1 rabbit (animate-passive) — wolf hunts to kill.
- *  S5: 4 rabbits + 2 wolves + grass — full ecosystem, both policies learn. */
+ *  S5: 4 rabbits + 2 wolves + grass — full ecosystem, both policies learn.
+ *  targetBounds is the eventual pen half-width; each stage starts tighter. */
 const STAGES = [
-  { label: 'S1-graze',   learners: ['rabbit'],         bounds: 4,  grass: 8,  rabbits: 1, wolves: 0, maxAgeR: 9999, maxAgeW: 9999, starveR: 1.0, starveW: 0.0 },
-  { label: 'S2-survive', learners: ['rabbit'],         bounds: 6,  grass: 6,  rabbits: 1, wolves: 0, maxAgeR: 60,   maxAgeW: 9999, starveR: 1.0, starveW: 0.0 },
-  { label: 'S3-repro',   learners: ['rabbit'],         bounds: 8,  grass: 8,  rabbits: 2, wolves: 0, maxAgeR: 60,   maxAgeW: 9999, starveR: 1.0, starveW: 0.0 },
-  { label: 'S4-hunt',    learners: ['wolf'],           bounds: 10, grass: 4,  rabbits: 1, wolves: 1, maxAgeR: 60,   maxAgeW: 120,  starveR: 1.0, starveW: 0.5 },
-  { label: 'S5-eco',     learners: ['rabbit', 'wolf'], bounds: 18, grass: 12, rabbits: 4, wolves: 2, maxAgeR: 60,   maxAgeW: 120,  starveR: 1.0, starveW: 0.5 },
+  { label: 'S1-graze',   learners: ['rabbit'],         targetBounds: 4,  grass: 8,  rabbits: 1, wolves: 0, maxAgeR: 9999, maxAgeW: 9999, starveR: 1.0, starveW: 0.0 },
+  { label: 'S2-survive', learners: ['rabbit'],         targetBounds: 6,  grass: 6,  rabbits: 1, wolves: 0, maxAgeR: 60,   maxAgeW: 9999, starveR: 1.0, starveW: 0.0 },
+  { label: 'S3-repro',   learners: ['rabbit'],         targetBounds: 8,  grass: 8,  rabbits: 2, wolves: 0, maxAgeR: 60,   maxAgeW: 9999, starveR: 1.0, starveW: 0.0 },
+  { label: 'S4-hunt',    learners: ['wolf'],           targetBounds: 10, grass: 4,  rabbits: 1, wolves: 1, maxAgeR: 60,   maxAgeW: 120,  starveR: 1.0, starveW: 0.5 },
+  { label: 'S5-eco',     learners: ['rabbit', 'wolf'], targetBounds: 18, grass: 12, rabbits: 4, wolves: 2, maxAgeR: 60,   maxAgeW: 120,  starveR: 1.0, starveW: 0.5 },
 ];
 
 const cfg = { hidden: 64, lr: 0.002, baselineEMA: 0.95, entropyCoef: 0.01 };
@@ -69,7 +68,7 @@ console.log(`=== ECOSYSTEM TRAINING · ${epsPerStage} eps/stage ===`);
 for (let si = 0; si < STAGES.length; si++) {
   const stage = STAGES[si];
   const isFinal = si === STAGES.length - 1;
-  console.log(`\n--- ${stage.label} (bounds=${stage.bounds}m · ${stage.rabbits}rabbits ${stage.wolves}wolves ${stage.grass}grass) ---`);
+  console.log(`\n--- ${stage.label} (bounds ${tightBounds(stage).toFixed(1)}→${stage.targetBounds}m · ${stage.rabbits}rabbits ${stage.wolves}wolves ${stage.grass}grass) ---`);
   const result = runStage(stage, isFinal);
   histRabbit.push(...result.histR);
   histWolf.push(...result.histW);
@@ -126,19 +125,22 @@ function runStage(stage, isFinal) {
   const trainsRabbit = stage.learners.includes('rabbit');
   const trainsWolf = stage.learners.includes('wolf');
   const episodeSec = stepsPerEp * createEnv4().env.config.dt;
+  let bounds = tightBounds(stage);
+  const boundsHist = [];
+  const scoreTrace = [];
 
   for (let ep = 0; ep < epsPerStage; ep++) {
-    const env = createEnv4({ bounds: stage.bounds, visionRadius: Math.max(6, stage.bounds * 1.4) }, 7000 + ep);
+    const env = createEnv4({ bounds, visionRadius: Math.max(6, bounds * 1.4) }, 7000 + ep);
     // Scatter grass uniformly inside the pen.
     for (let i = 0; i < stage.grass; i++) {
-      spawnGrass(env, (Math.random() - 0.5) * 2 * stage.bounds * 0.85,
-                      (Math.random() - 0.5) * 2 * stage.bounds * 0.85);
+      spawnGrass(env, (Math.random() - 0.5) * 2 * bounds * 0.85,
+                      (Math.random() - 0.5) * 2 * bounds * 0.85);
     }
     // Spawn rabbits.
     const rabbits = [];
     for (let i = 0; i < stage.rabbits; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = (Math.random() * 0.4 + 0.2) * stage.bounds;
+      const r = (Math.random() * 0.35 + 0.1) * bounds;
       const e = spawn4(env, {
         archetype: 'rabbit', team: 'prey',
         x: Math.cos(ang) * r, z: Math.sin(ang) * r,
@@ -154,7 +156,7 @@ function runStage(stage, isFinal) {
     const wolves = [];
     for (let i = 0; i < stage.wolves; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = (Math.random() * 0.3 + 0.5) * stage.bounds;
+      const r = (Math.random() * 0.35 + 0.2) * bounds;
       const e = spawn4(env, {
         archetype: 'wolf', team: 'predator',
         x: Math.cos(ang) * r, z: Math.sin(ang) * r,
@@ -223,6 +225,11 @@ function runStage(stage, isFinal) {
     const meanWolfLife = mean(epLifetimes.wolf);
     const rabbitScore = meanRabbitLife + (epRabbitBirths / episodeSec) * 60 * 10;
     const wolfScore = epKills + epWolfBirths * 3 + meanWolfLife / 30;
+    const stageScore = trainsRabbit && trainsWolf ? (rabbitScore + wolfScore * 10) / 2
+      : trainsRabbit ? rabbitScore
+      : wolfScore * 10;
+    scoreTrace.push(stageScore);
+    boundsHist.push(bounds);
 
     if (trajR.length > 0) {
       trajR[trajR.length - 1].episodeEnd = true;
@@ -262,8 +269,9 @@ function runStage(stage, isFinal) {
     }
 
     if (ep % Math.max(1, Math.floor(epsPerStage / 8)) === 0) {
-      console.log(`   ep ${ep.toString().padStart(5)}/${epsPerStage}  R-ret ${rabbitReturn.toFixed(1).padStart(7)} (ma ${(maR[maR.length-1]||0).toFixed(1)})  W-ret ${wolfReturn.toFixed(1).padStart(7)} (ma ${(maW[maW.length-1]||0).toFixed(1)})  +R${births.rabbit} +W${births.wolf} kills:${kills}`);
+      console.log(`   ep ${ep.toString().padStart(5)}/${epsPerStage}  b=${bounds.toFixed(1).padStart(4)}  R-ret ${rabbitReturn.toFixed(1).padStart(7)} (ma ${(maR[maR.length-1]||0).toFixed(1)})  W-ret ${wolfReturn.toFixed(1).padStart(7)} (ma ${(maW[maW.length-1]||0).toFixed(1)})  +R${births.rabbit} +W${births.wolf} kills:${kills}`);
     }
+    bounds = maybeGrowBounds(bounds, stage.targetBounds, scoreTrace);
   }
   if (batchR.length > 0) reinforceUpdate4(rabbitPolicy, batchR.flat());
   if (batchW.length > 0) reinforceUpdate4(wolfPolicy, batchW.flat());
@@ -274,6 +282,8 @@ function runStage(stage, isFinal) {
     wolfKillRate: stage.wolves > 0 ? kills / (epsPerStage * stage.wolves) : 0,
     meanRabbitLifetime: mean(lifetimes.rabbit),
     meanWolfLifetime: mean(lifetimes.wolf),
+    startBounds: boundsHist[0] ?? bounds,
+    endBounds: boundsHist[boundsHist.length - 1] ?? bounds,
     births,
     kills,
   };
@@ -283,6 +293,25 @@ function runStage(stage, isFinal) {
 function clone(p) { return deserializePolicy4(serializePolicy4(p)); }
 
 function mean(xs) { return xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0; }
+
+function tightBounds(stage) {
+  const entityArea = stage.rabbits * Math.PI * (PHYS.rabbit.size + 0.55) ** 2
+    + stage.wolves * Math.PI * (PHYS.wolf.size + 0.65) ** 2;
+  const grassArea = stage.grass * Math.PI * 0.45 ** 2;
+  // Half-width for a square whose usable area is ~70% occupied. This keeps
+  // early curriculum pens barely roomy instead of open-field sparse.
+  return Math.min(stage.targetBounds, Math.max(1.35, Math.sqrt((entityArea + grassArea) / 0.70) / 2));
+}
+
+function maybeGrowBounds(current, target, scores) {
+  if (current >= target || scores.length < 60) return current;
+  const recent = mean(scores.slice(-20));
+  const older = mean(scores.slice(-60, -40));
+  const delta = Math.abs(recent - older);
+  const scale = Math.max(1, Math.abs(older));
+  if (delta / scale > 0.03) return current;
+  return Math.min(target, current * 1.35 + 0.25);
+}
 
 function asciiPlot(label, values) {
   if (values.length === 0) return `(no data for ${label})`;

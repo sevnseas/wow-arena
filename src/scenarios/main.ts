@@ -156,6 +156,8 @@ const PHYS = {
   rabbit: { size: 0.28, speed: 2.6, attackCooldown: 1.0, hp: 30 },
   wolf:   { size: 0.50, speed: 4.0, attackCooldown: 0.4, hp: 60 },
 };
+const ECOSYSTEM_TARGET_HALF = 18;
+const ECOSYSTEM_TICK_SPEED = 16;
 
 type EcosystemWorld = ReturnType<typeof createEcosystemWorld>;
 let ecosystemPolicies: Partial<Record<'rabbit' | 'wolf', Policy4>> = {};
@@ -231,7 +233,7 @@ const SCENARIOS: Record<string, ScenarioDef> = {
   },
   'ecosystem': {
     name: 'ecosystem · rabbits + wolves',
-    half: 18,
+    half: ECOSYSTEM_TARGET_HALF,
     spawn(half) {
       const eco = createEcosystemWorld(half);
       return eco as any;
@@ -276,7 +278,8 @@ const SCENARIOS: Record<string, ScenarioDef> = {
 };
 
 function createEcosystemWorld(half: number) {
-  const env = createEnv4({ bounds: half, visionRadius: 25 }, 31);
+  const initialHalf = tightEcosystemHalf(6, 2, 12);
+  const env = createEnv4({ bounds: initialHalf, visionRadius: Math.max(6, initialHalf * 1.4) }, 31);
   const group = new THREE.Group();
   group.name = 'EcosystemScenario';
   scene.add(group);
@@ -290,11 +293,13 @@ function createEcosystemWorld(half: number) {
     lastSample: -1,
     extinctionAt: null as number | null,
     elapsed: 0,
+    half: initialHalf,
+    targetHalf: half,
   };
 
   for (let i = 0; i < 12; i++) {
     const a = i / 12 * Math.PI * 2;
-    const r = i % 3 === 0 ? 4 : i % 3 === 1 ? 9 : 14;
+    const r = (0.25 + (i % 3) * 0.22) * initialHalf;
     const g = spawnGrass(env, Math.cos(a) * r, Math.sin(a) * r);
     const mesh = new THREE.Mesh(
       new THREE.CircleGeometry(0.6, 24),
@@ -308,10 +313,10 @@ function createEcosystemWorld(half: number) {
 
   for (let i = 0; i < 6; i++) {
     const a = i / 6 * Math.PI * 2;
-    spawnEcosystemEntity(env, 'rabbit', Math.cos(a) * 6, Math.sin(a) * 6);
+    spawnEcosystemEntity(env, 'rabbit', Math.cos(a) * initialHalf * 0.42, Math.sin(a) * initialHalf * 0.42);
   }
-  spawnEcosystemEntity(env, 'wolf', -8, -8);
-  spawnEcosystemEntity(env, 'wolf', 8, 8);
+  spawnEcosystemEntity(env, 'wolf', -initialHalf * 0.5, -initialHalf * 0.5);
+  spawnEcosystemEntity(env, 'wolf', initialHalf * 0.5, initialHalf * 0.5);
 
   function ensureMesh(e: any): THREE.Mesh {
     let mesh = entityMeshes.get(e.id);
@@ -388,6 +393,7 @@ function createEcosystemWorld(half: number) {
       metrics.history.push({ t: sec, rabbits, wolves });
       while (metrics.history.length > 120) metrics.history.shift();
       if (metrics.extinctionAt === null && (rabbits === 0 || wolves === 0)) metrics.extinctionAt = sec;
+      maybeGrowEcosystemPen(env, metrics);
     }
     syncMeshes();
   }
@@ -405,6 +411,24 @@ function createEcosystemWorld(half: number) {
   };
 }
 
+function tightEcosystemHalf(rabbits: number, wolves: number, grass: number): number {
+  const entityArea = rabbits * Math.PI * (PHYS.rabbit.size + 0.55) ** 2
+    + wolves * Math.PI * (PHYS.wolf.size + 0.65) ** 2;
+  const grassArea = grass * Math.PI * 0.45 ** 2;
+  return Math.max(1.5, Math.sqrt((entityArea + grassArea) / 0.70) / 2);
+}
+
+function maybeGrowEcosystemPen(env: RLEnv4, metrics: { history: Array<{ rabbits: number; wolves: number }>; half: number; targetHalf: number }): void {
+  if (metrics.half >= metrics.targetHalf || metrics.history.length < 40) return;
+  const score = (p: { rabbits: number; wolves: number }) => p.rabbits + p.wolves * 2;
+  const recent = metrics.history.slice(-12).reduce((s, p) => s + score(p), 0) / 12;
+  const older = metrics.history.slice(-40, -28).reduce((s, p) => s + score(p), 0) / 12;
+  if (Math.abs(recent - older) / Math.max(1, Math.abs(older)) > 0.05) return;
+  metrics.half = Math.min(metrics.targetHalf, metrics.half * 1.35 + 0.25);
+  env.env.config.bounds = metrics.half;
+  env.env.config.visionRadius = Math.max(6, metrics.half * 1.4);
+}
+
 function spawnEcosystemEntity(env: RLEnv4, archetype: 'rabbit' | 'wolf', x: number, z: number) {
   const p = PHYS[archetype];
   return spawn4(env, {
@@ -419,7 +443,8 @@ function spawnEcosystemEntity(env: RLEnv4, archetype: 'rabbit' | 'wolf', x: numb
 }
 
 const scen = SCENARIOS[scenarioName] ?? SCENARIOS['wolf-vs-rabbit'];
-scene.add(buildPen(scen.half));
+const pen = buildPen(scen.half);
+scene.add(pen);
 const world = scen.spawn(scen.half);
 heroEntity = world.hero;
 
@@ -619,12 +644,13 @@ function updateEcosystemHud(eco: EcosystemWorld): void {
     <div class="row"><span class="lbl">policy</span><span class="val"><span style="color:${rabbitPolicy}">rabbit</span> · <span style="color:${wolfPolicy}">wolf</span></span></div>
     <hr style="border:0;border-top:1px solid #333;margin:6px 0">
     <div class="row"><span class="lbl">pop</span><span class="val">rabbits ${rabbits.length} · wolves ${wolves.length}</span></div>
+    <div class="row"><span class="lbl">pen</span><span class="val">${eco.metrics.half.toFixed(1)}m → ${eco.metrics.targetHalf.toFixed(0)}m</span></div>
     <div class="row"><span class="lbl">births</span><span class="val">R ${eco.metrics.births.rabbit} · W ${eco.metrics.births.wolf}</span></div>
     <div class="row"><span class="lbl">deaths</span><span class="val">R ${eco.metrics.deaths.rabbit} · W ${eco.metrics.deaths.wolf}</span></div>
     <div class="row"><span class="lbl">avg age</span><span class="val">R ${avgAge(rabbits).toFixed(1)}s · W ${avgAge(wolves).toFixed(1)}s</span></div>
     <div class="row"><span class="lbl">grass</span><span class="val">${(grassCoverage * 100).toFixed(0)}%</span></div>
     <div class="row"><span class="lbl">extinct</span><span class="val">${extinctionEstimate}</span></div>
-    <div class="row"><span class="lbl">sim×</span><span class="val">${simSpeed.toFixed(2)}</span></div>
+    <div class="row"><span class="lbl">sim×</span><span class="val">${simSpeed.toFixed(2)} tick-speed</span></div>
     <div style="margin-top:8px;font-family:monospace;line-height:1">${populationChart(eco.metrics.history)}</div>
   `;
 }
@@ -769,6 +795,7 @@ function humanAge(iso: string): string {
 // ---- Main loop ----
 const clock = new THREE.Clock();
 let simSpeed = 1.0;
+if ((world as any).kind === 'ecosystem') simSpeed = ECOSYSTEM_TICK_SPEED;
 let lastDist = NaN;
 let kills = 0;
 let killCelebrated = false;
@@ -778,8 +805,14 @@ function frame() {
   const real = Math.min(0.05, clock.getDelta());
   const dt = real * simSpeed;
 
-  if (driver) driver.update(dt);
-  world.tick(dt);
+  if ((world as any).kind === 'ecosystem') {
+    const fixed = 1 / 60;
+    const steps = Math.max(1, Math.min(240, Math.floor(dt / fixed)));
+    for (let i = 0; i < steps; i++) world.tick(fixed);
+  } else {
+    if (driver) driver.update(dt);
+    world.tick(dt);
+  }
   updateActionArrows();
 
   // Log significant events.
@@ -798,6 +831,11 @@ function frame() {
   }
 
   // Camera follow only mild — keep pen visible at all times.
+  if ((world as any).kind === 'ecosystem') {
+    const eco = world as any as EcosystemWorld;
+    const scale = eco.metrics.half / scen.half;
+    pen.scale.set(scale, 1, scale);
+  }
   if (heroEntity) {
     const lerp = scen.half >= 8 ? 0.04 : 0.0; // small pens: static cam; bigger: gentle follow
     heroLookAt.lerp(new THREE.Vector3(heroEntity.pos.x * 0.3, 0.5, heroEntity.pos.z * 0.3), lerp || 1);
