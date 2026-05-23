@@ -53,6 +53,20 @@ function rl3ToObs4(a) {
 }
 
 function spawnScenario(name) {
+  // Pen variants verify the policy in the distribution it was actually trained
+  // on. Curriculum stages: pen3 / pen6 / pen12 / open(25). Without matching
+  // the training distribution, low kill-rates can be misread as "policy
+  // doesn't work" when it's really "policy hasn't learned this regime yet".
+  if (name === 'wolf-vs-rabbit-pen') {
+    const rabbits = new RabbitWarren(scene, 1, 3, null);
+    const wolves = new WolfPack(scene, 1, 3, null, [rabbits], new THREE.Vector3(0.5, 0, 0.5));
+    return {
+      wolves, rabbits, providers: [rabbits],
+      brain: wolves.getPolicy4Agents(),
+      obs: rabbits.getPolicyAgents().map(rl3ToObs4),
+      tick(dt) { wolves.update(dt); rabbits.update(dt); },
+    };
+  }
   if (name === 'wolf-vs-rabbit') {
     const rabbits = new RabbitWarren(scene, 1, 25, null);
     const wolves = new WolfPack(scene, 1, 25, null, [rabbits], new THREE.Vector3(-8, 0, -8));

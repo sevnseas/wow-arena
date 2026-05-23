@@ -27,6 +27,16 @@ export class Policy4 {
   W1: Float32Array; b1: Float32Array;
   W2: Float32Array; b2: Float32Array;
   baseline = 0;
+  // Adam optimizer state — first and second moment of gradient per parameter.
+  // SGD-REINFORCE was producing W2 updates dominated by noise; Adam's
+  // per-parameter step adaptation lets the small but consistent policy
+  // gradient actually accumulate. Without this, training stalls around the
+  // random-policy baseline.
+  mW1: Float32Array; vW1: Float32Array;
+  mb1: Float32Array; vb1: Float32Array;
+  mW2: Float32Array; vW2: Float32Array;
+  mb2: Float32Array; vb2: Float32Array;
+  adamStep = 0;
 
   constructor(cfg: Partial<PolicyConfig4> = {}, rng?: Rng) {
     this.cfg = { ...DEFAULT_POLICY_CONFIG4, ...cfg };
@@ -35,6 +45,10 @@ export class Policy4 {
     this.b1 = new Float32Array(h);
     this.W2 = new Float32Array(h * ACTION_COUNT);
     this.b2 = new Float32Array(ACTION_COUNT);
+    this.mW1 = new Float32Array(this.W1.length); this.vW1 = new Float32Array(this.W1.length);
+    this.mb1 = new Float32Array(this.b1.length); this.vb1 = new Float32Array(this.b1.length);
+    this.mW2 = new Float32Array(this.W2.length); this.vW2 = new Float32Array(this.W2.length);
+    this.mb2 = new Float32Array(this.b2.length); this.vb2 = new Float32Array(this.b2.length);
     const init = (arr: Float32Array, fanIn: number) => {
       const scale = Math.sqrt(2 / fanIn);
       for (let i = 0; i < arr.length; i++) {
@@ -81,6 +95,29 @@ export interface Step4 {
   action: number;
   reward: number;
   temperature: number;
+}
+
+/** Adam hyperparams. β1=0.9, β2=0.999, ε=1e-8 are the defaults from the
+ *  original Adam paper and are appropriate for this scale of network. */
+const ADAM_B1 = 0.9;
+const ADAM_B2 = 0.999;
+const ADAM_EPS = 1e-8;
+
+function adamStep(
+  param: Float32Array, grad: Float32Array,
+  m: Float32Array, v: Float32Array,
+  lr: number, step: number,
+): void {
+  const b1c = 1 - Math.pow(ADAM_B1, step);
+  const b2c = 1 - Math.pow(ADAM_B2, step);
+  for (let i = 0; i < param.length; i++) {
+    const g = grad[i];
+    m[i] = ADAM_B1 * m[i] + (1 - ADAM_B1) * g;
+    v[i] = ADAM_B2 * v[i] + (1 - ADAM_B2) * g * g;
+    const mHat = m[i] / b1c;
+    const vHat = v[i] / b2c;
+    param[i] -= lr * mHat / (Math.sqrt(vHat) + ADAM_EPS);
+  }
 }
 
 export function reinforceUpdate4(policy: Policy4, traj: Step4[], gamma = 0.97): number {
@@ -138,11 +175,20 @@ export function reinforceUpdate4(policy: Policy4, traj: Step4[], gamma = 0.97): 
     }
   }
 
+  // Adam update: divide accumulated gradient by trajectory length to get a
+  // per-step expected gradient, then let Adam handle scaling. Adam's per-
+  // parameter LR adaptation is what makes this trainable — plain SGD at any
+  // LR setting was either too small (no learning) or too large (blow up).
   const invN = 1 / traj.length;
-  for (let i = 0; i < policy.W1.length; i++) policy.W1[i] -= lr * gW1[i] * invN;
-  for (let i = 0; i < policy.b1.length; i++) policy.b1[i] -= lr * gb1[i] * invN;
-  for (let i = 0; i < policy.W2.length; i++) policy.W2[i] -= lr * gW2[i] * invN;
-  for (let i = 0; i < policy.b2.length; i++) policy.b2[i] -= lr * gb2[i] * invN;
+  for (let i = 0; i < gW1.length; i++) gW1[i] *= invN;
+  for (let i = 0; i < gb1.length; i++) gb1[i] *= invN;
+  for (let i = 0; i < gW2.length; i++) gW2[i] *= invN;
+  for (let i = 0; i < gb2.length; i++) gb2[i] *= invN;
+  policy.adamStep += 1;
+  adamStep(policy.W1, gW1, policy.mW1, policy.vW1, lr, policy.adamStep);
+  adamStep(policy.b1, gb1, policy.mb1, policy.vb1, lr, policy.adamStep);
+  adamStep(policy.W2, gW2, policy.mW2, policy.vW2, lr, policy.adamStep);
+  adamStep(policy.b2, gb2, policy.mb2, policy.vb2, lr, policy.adamStep);
 
   return mean;
 }
