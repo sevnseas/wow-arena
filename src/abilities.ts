@@ -10,7 +10,12 @@ import { ARENA_BOUND } from './shared/physics';
 // Types
 // ============================================================================
 
-export type ClassName = 'Rogue' | 'Mage' | 'Priest';
+export type ClassName = 'Rogue' | 'Mage' | 'Priest' | 'Wolf' | 'Cat' | 'Rabbit';
+/** Animal classes share the RL4 action space — no human ability bar. */
+export const ANIMAL_CLASSES: ClassName[] = ['Wolf', 'Cat', 'Rabbit'];
+export function isAnimalClass(c: ClassName): boolean {
+  return ANIMAL_CLASSES.includes(c);
+}
 
 export interface AbilityDef {
   id: string;
@@ -299,7 +304,13 @@ const priestAbilities: AbilityDef[] = [
 export const CLASS_ABILITIES: Record<ClassName, AbilityDef[]> = {
   Rogue: rogueAbilities,
   Mage: mageAbilities,
-  Priest: priestAbilities
+  Priest: priestAbilities,
+  // Animal classes use the RL4 action space (8 movement directions + 3
+  // abilities). No human-style ability bar; the player drives the body
+  // directly with WASD just like the trained policy does.
+  Wolf: [],
+  Cat: [],
+  Rabbit: [],
 };
 
 export function getAbilityByKey(className: ClassName, key: string): AbilityDef | undefined {

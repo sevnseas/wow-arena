@@ -8,7 +8,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "train": "tsx scripts/train-rl.mjs"
+    "train": "tsx scripts/train-rl.mjs",
+    "train:rl4": "tsx scripts/train-rl4.mjs",
+    "scenario": "tsx scripts/scenario-tick.mjs"
   },
   "dependencies": {
     "simplex-noise": "^4.0.3",

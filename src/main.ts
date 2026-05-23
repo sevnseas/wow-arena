@@ -23,7 +23,8 @@ import { INITIAL_ENTITIES, EntityDef } from './entities';
 import { ProceduralCharacterView, CharacterView, LocomotionState } from './character';
 import { MixamoCharacterView } from './mixamo-character';
 import { CooldownManager, DebuffManager, CastSystem, ProjectileSystem } from './systems';
-import { ClassName, AbilityContext, getClassAbilities, getAbilityByKey } from './abilities';
+import { ClassName, AbilityContext, getClassAbilities, getAbilityByKey, isAnimalClass } from './abilities';
+import { AnimalCharacterView, type AnimalKind } from './animal-view';
 import { getModeFromUrl, GameMode } from './mode';
 import { NetworkGame, ConnectionState } from './net';
 import { SkyEnvironment } from './sky';
@@ -48,6 +49,7 @@ import type { PreyProvider } from './prey';
 import { BasicGameEntity, GameEntity, GameEntityRegistry, RefGameEntity } from './game-entity';
 import { MutantPredator } from './mutant-predator';
 import { loadPolicyRegistry, PolicyDriver } from './rl';
+import { loadPolicy4Registry, PolicyDriver4, type PolicyAgent4Ref } from './rl/runtime4';
 
 // ============================================================================
 // Character Factory
@@ -114,6 +116,7 @@ interface GameState {
   livingProviders: PreyProvider[];
   entityRegistry: GameEntityRegistry;
   policyDriver: PolicyDriver | null;
+  policyDriver4: PolicyDriver4 | null;
 
   // Phase 4: Network state
   mode: GameMode;
@@ -344,19 +347,27 @@ async function setClass(state: GameState, className: ClassName): Promise<void> {
   // Update UI
   document.getElementById('class-name')!.textContent = className;
   updateActionBar(state);
+  // Animal classes have no human ability bar — hide the action bar entirely
+  // so the visual matches the RL4 action space (8 movement + 3 abilities,
+  // driven via WASD/123 directly).
+  const bar = document.getElementById('action-bar');
+  if (bar) bar.style.display = isAnimalClass(className) ? 'none' : '';
 
-  // Update player color based on class
-  const colors: Record<ClassName, number> = {
-    Rogue: 0xffff00,
-    Mage: 0x69ccf0,
-    Priest: 0xffffff
-  };
-
-  // Recreate player view with new color
+  // Recreate player view. For animal classes, swap in the pack mesh from
+  // wolves.ts / cats.ts / rabbits.ts wrapped as a CharacterView — same body
+  // you see roaming the world, now player-driven.
   state.scene.remove(state.playerView.root);
   state.playerView.dispose();
-  const useMixamo = new URL(window.location.href).searchParams.get('mixamo') === '1';
-  state.playerView = await createCharacterView(useMixamo, colors[className]);
+  if (isAnimalClass(className)) {
+    const kind = className.toLowerCase() as AnimalKind;
+    state.playerView = new AnimalCharacterView(kind);
+  } else {
+    const colors: Record<string, number> = {
+      Rogue: 0xffff00, Mage: 0x69ccf0, Priest: 0xffffff,
+    };
+    const useMixamo = new URL(window.location.href).searchParams.get('mixamo') === '1';
+    state.playerView = await createCharacterView(useMixamo, colors[className] ?? 0xffffff);
+  }
   state.playerView.root.position.copy(state.player.position);
   state.scene.add(state.playerView.root);
   state.player.mesh = state.playerView.root;
@@ -921,6 +932,7 @@ async function init(): Promise<GameState> {
     livingProviders: [],
     entityRegistry,
     policyDriver: null,
+    policyDriver4: null,
   };
   liveState = state;
 
@@ -1029,18 +1041,37 @@ async function init(): Promise<GameState> {
   // when available. The hand-written state machines remain the algorithmic
   // Tier-2 engine; the brain only picks Attack/Flee/Idle/Heal every ~0.5s.
   // Disable with `?policy=0` in the URL.
-  const useBrain = new URLSearchParams(location.search).get('policy') !== '0';
+  const urlParams = new URLSearchParams(location.search);
+  const useBrain = urlParams.get('policy') !== '0';
+  const policyMode = urlParams.get('policy') ?? 'rl4'; // 'rl3' forces legacy
   if (useBrain) {
     const baseUrl = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
-    const base = `${baseUrl.replace(/\/$/, '')}/policies`;
-    const registry = await loadPolicyRegistry(base);
-    if (registry) {
-      state.policyDriver = new PolicyDriver(registry);
-      state.policyDriver.setAgents(collectPolicyAgents(state));
-      state.editor.setPolicyDriver(state.policyDriver);
-      console.log('[rl] trained per-archetype policies driving wolves, rabbits, cats, dogs, cows, werewolf');
-    } else {
-      console.log('[rl] no trained policies found at', base, '— using built-in AI. Run `npm run train`.');
+    const root = baseUrl.replace(/\/$/, '');
+
+    // Prefer RL4 (direct-control, minimap obs) unless explicitly forced to RL3.
+    if (policyMode !== 'rl3') {
+      const reg4 = await loadPolicy4Registry(`${root}/policies-rl4`);
+      if (reg4) {
+        state.policyDriver4 = new PolicyDriver4(reg4);
+        state.policyDriver4.setAgents(collectPolicy4Agents(state));
+        state.editor.setPolicyDriver4?.(state.policyDriver4);
+        console.log('[rl4] trained direct-control policies driving wolves, cats, werewolf');
+      } else {
+        console.log('[rl4] no trained policies found at', `${root}/policies-rl4`, '— falling back to RL3. Run `npm run train:rl4` to generate them.');
+      }
+    }
+
+    // Fall back to RL3 (Intent-based) if RL4 didn't load.
+    if (!state.policyDriver4) {
+      const registry = await loadPolicyRegistry(`${root}/policies`);
+      if (registry) {
+        state.policyDriver = new PolicyDriver(registry);
+        state.policyDriver.setAgents(collectPolicyAgents(state));
+        state.editor.setPolicyDriver(state.policyDriver);
+        console.log('[rl] trained per-archetype RL3 policies driving wolves, rabbits, cats, dogs, cows, werewolf');
+      } else {
+        console.log('[rl] no trained policies — using built-in AI.');
+      }
     }
   }
 
@@ -1056,6 +1087,51 @@ function collectPolicyAgents(state: GameState) {
     ...state.cows.getPolicyAgents(),
     ...state.mutantPredator.getPolicyAgents(),
   ];
+}
+
+/** RL4 agent list. Trained archetypes (wolf/cat/werewolf) get brain-controlled
+ *  movement; all other entities (player, rabbits, cows, dogs) are still tracked
+ *  as read-only observables so the trained policies see the full ecosystem. */
+function collectPolicy4Agents(state: GameState): PolicyAgent4Ref[] {
+  const player = state.player.position;
+  const noop = () => {};
+  const playerAgent: PolicyAgent4Ref = {
+    id: 'player',
+    team: 'prey',
+    archetype: 'rabbit', // placeholder — only used for archetype-code in obs
+    size: 0.45,
+    get alive() { return true; },
+    get hp() { return 100; },
+    get maxHp() { return 100; },
+    get pos() { return { x: player.x, z: player.z }; },
+    applyAction: noop,
+  };
+  return [
+    ...state.wolves.getPolicy4Agents(),
+    ...state.cats.getPolicy4Agents(),
+    ...state.mutantPredator.getPolicy4Agents(),
+    // Observables only (no trained policy → driver won't call applyAction on them):
+    ...state.rabbits.getPolicyAgents().map(rl3ToObs4),
+    ...state.dogs.getPolicyAgents().map(rl3ToObs4),
+    ...state.cows.getPolicyAgents().map(rl3ToObs4),
+    playerAgent,
+  ];
+}
+
+/** Wrap an RL3-style PolicyAgentRef as a read-only RL4 observable. */
+function rl3ToObs4(a: {
+  id: string; team: 'predator' | 'prey'; archetype: 'wolf'|'rabbit'|'cow'|'cat'|'dog'|'werewolf';
+  size: number; alive: boolean; hp: number; maxHp: number;
+  pos: { x: number; z: number };
+}): PolicyAgent4Ref {
+  return {
+    id: a.id, team: a.team, archetype: a.archetype, size: a.size,
+    get alive() { return a.alive; },
+    get hp() { return a.hp; },
+    get maxHp() { return a.maxHp; },
+    get pos() { return a.pos; },
+    applyAction: () => {},
+  };
 }
 
 // ============================================================================
@@ -1194,7 +1270,10 @@ function animateStandalone(state: GameState, delta: number): void {
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
   state.mutantPredator.update(delta);
-  if (state.policyDriver) {
+  if (state.policyDriver4) {
+    state.policyDriver4.setAgents(collectPolicy4Agents(state));
+    state.policyDriver4.update(delta);
+  } else if (state.policyDriver) {
     state.policyDriver.setAgents(collectPolicyAgents(state));
     state.policyDriver.update(delta);
   }
@@ -1274,7 +1353,10 @@ function animateMultiplayer(state: GameState, delta: number): void {
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
   state.mutantPredator.update(delta);
-  if (state.policyDriver) {
+  if (state.policyDriver4) {
+    state.policyDriver4.setAgents(collectPolicy4Agents(state));
+    state.policyDriver4.update(delta);
+  } else if (state.policyDriver) {
     state.policyDriver.setAgents(collectPolicyAgents(state));
     state.policyDriver.update(delta);
   }

@@ -13,6 +13,8 @@
 import * as THREE from 'three';
 import type { PolicyDriver } from './rl';
 import { Intent } from './rl';
+import type { PolicyDriver4 } from './rl/runtime4';
+import { ACTION_NAMES } from './rl/runtime4';
 
 const EDITOR_HOTKEY = 'Backquote';
 const INTENT_NAMES = ['Idle', 'Attack', 'CC', 'Heal', 'Flee'];
@@ -32,6 +34,7 @@ export class SceneEditor {
   private readonly listeners = new Set<Listener>();
   private highlight: THREE.LineSegments | null = null;
   private policyDriver: PolicyDriver | null = null;
+  private policyDriver4: PolicyDriver4 | null = null;
   private aiPanelTimer: number | null = null;
 
   constructor(scene: THREE.Scene, camera: THREE.Camera, canvas: HTMLCanvasElement) {
@@ -72,6 +75,10 @@ export class SceneEditor {
     this.policyDriver = driver;
   }
 
+  setPolicyDriver4(driver: PolicyDriver4): void {
+    this.policyDriver4 = driver;
+  }
+
   toggle(): void {
     this.open = !this.open;
     this.panel.style.display = this.open ? 'block' : 'none';
@@ -94,10 +101,11 @@ export class SceneEditor {
       window.clearInterval(this.aiPanelTimer);
       this.aiPanelTimer = null;
     }
-    if (!this.open || !this.selected || !this.policyDriver) return;
+    if (!this.open || !this.selected) return;
+    if (!this.policyDriver && !this.policyDriver4) return;
     const id = findPolicyAgentId(this.selected);
     if (!id) return;
-    this.aiPanelTimer = window.setInterval(() => this.renderAiPanel(), 400);
+    this.aiPanelTimer = window.setInterval(() => this.renderAiPanel(), 200);
   }
 
   /** Render world-space helpers (called each frame). */
@@ -256,7 +264,7 @@ export class SceneEditor {
     this.panel.appendChild(toggleRow('Visible', sel.visible, v => { sel.visible = v; }));
 
     // RL policy section (if this selection — or any ancestor — owns a policy agent).
-    if (this.policyDriver) {
+    if (this.policyDriver || this.policyDriver4) {
       const id = findPolicyAgentId(sel);
       if (id) this.appendAiSection(id);
     }
@@ -385,7 +393,9 @@ export class SceneEditor {
 
   private renderAiPanel(container?: HTMLElement, idOverride?: string): void {
     const wrap = container ?? (this.panel.querySelector('#ai-panel') as HTMLElement | null);
-    if (!wrap || !this.policyDriver || !this.selected) return;
+    if (!wrap || !this.selected) return;
+    if (this.policyDriver4) { this.renderRl4Panel(wrap, idOverride); return; }
+    if (!this.policyDriver) return;
     const id = idOverride ?? findPolicyAgentId(this.selected);
     if (!id) return;
     const agent = this.policyDriver.getAgent(id);
@@ -474,6 +484,108 @@ export class SceneEditor {
 
   private policyDriverElapsed(): number {
     return (this.policyDriver as unknown as { elapsed: number } | null)?.elapsed ?? 0;
+  }
+
+  /** RL4 policy panel: shows direct-control action probabilities (8 movement +
+   *  3 ability slots) and the live obs feeding the network. */
+  private renderRl4Panel(wrap: HTMLElement, idOverride?: string): void {
+    const driver = this.policyDriver4!;
+    const id = idOverride ?? findPolicyAgentId(this.selected);
+    if (!id) return;
+    const agent = driver.getAgent(id);
+    const decision = driver.getDecision(id);
+
+    wrap.innerHTML = '';
+    const title = document.createElement('div');
+    title.style.cssText = 'color:#9af0c0;margin-bottom:4px;font-weight:bold';
+    title.textContent = agent
+      ? `Policy / AI · ${agent.archetype} · RL4 (direct control)`
+      : 'Policy / AI · RL4';
+    wrap.appendChild(title);
+
+    if (!agent) {
+      const note = document.createElement('div');
+      note.style.cssText = 'color:#888';
+      note.textContent = '(agent not currently registered with RL4 driver)';
+      wrap.appendChild(note);
+      return;
+    }
+
+    if (!driver.hasPolicy(agent.archetype)) {
+      const note = document.createElement('div');
+      note.style.cssText = 'color:#aaa;font-size:11px';
+      note.textContent = `No RL4 policy trained for archetype "${agent.archetype}" — this entity is observed by the driver but runs its built-in AI. Train with \`npm run train:rl4\`.`;
+      wrap.appendChild(note);
+      return;
+    }
+
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;gap:10px;font-size:11px;color:#bbb;margin-bottom:4px';
+    const actName = decision ? ACTION_NAMES[decision.action] ?? String(decision.action) : '—';
+    head.innerHTML =
+      `<span>action: <b style="color:#7fd0ff">${actName}</b></span>` +
+      `<span>hp: <b style="color:#9cf">${agent.hp.toFixed(0)}/${agent.maxHp.toFixed(0)}</b></span>` +
+      `<span>focus: <b style="color:#ccc">${decision?.focusId ?? '∅'}</b></span>`;
+    wrap.appendChild(head);
+
+    if (decision) {
+      const bars = document.createElement('div');
+      bars.style.cssText = 'margin:4px 0';
+      const probs = decision.probs;
+      for (let k = 0; k < probs.length; k++) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:1px 0;font-size:10px';
+        const label = document.createElement('span');
+        label.textContent = ACTION_NAMES[k];
+        const isAbility = k >= 8;
+        const color = isAbility ? '#e7c890' : '#7fd0ff';
+        label.style.cssText = `width:60px;color:${color}`;
+        const barWrap = document.createElement('div');
+        barWrap.style.cssText = 'flex:1;background:#202028;border:1px solid #333;height:10px;position:relative';
+        const bar = document.createElement('div');
+        bar.style.cssText = `position:absolute;left:0;top:0;bottom:0;width:${(probs[k] * 100).toFixed(1)}%;background:${color};opacity:${k === decision.action ? '1' : '0.5'}`;
+        barWrap.appendChild(bar);
+        const pct = document.createElement('span');
+        pct.style.cssText = 'width:38px;text-align:right;color:#ccc';
+        pct.textContent = `${(probs[k] * 100).toFixed(1)}%`;
+        row.appendChild(label);
+        row.appendChild(barWrap);
+        row.appendChild(pct);
+        bars.appendChild(row);
+      }
+      wrap.appendChild(bars);
+
+      // Compact view of the 140-dim observation: how many nearby entities & top
+      // 3 closest with team/archetype/HP.
+      const obsLine = document.createElement('div');
+      obsLine.style.cssText = 'font-size:10px;color:#7aa;margin-top:2px;line-height:1.5';
+      const s = decision.state;
+      const slots: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const base = i * 7;
+        const occupied = s[base + 5] > 0; // archetype code
+        if (!occupied) break;
+        const archCode = Math.round(s[base + 5] * 6);
+        const archName = ['?', 'wlf', 'rab', 'cow', 'cat', 'dog', 'wwf'][archCode] ?? '?';
+        const team = s[base + 6] > 0.5 ? 'E' : 'A';
+        slots.push(`${archName}/${team} hp=${(s[base + 4] * 100).toFixed(0)}%`);
+      }
+      let nVisible = 0;
+      for (let i = 0; i < 20; i++) if (s[i * 7 + 5] > 0) nVisible++;
+      obsLine.textContent = `obs: ${nVisible} nearby · ${slots.join(' | ') || '(none)'}`;
+      wrap.appendChild(obsLine);
+
+      const ago = (driver.elapsed - decision.takenAt);
+      const meta = document.createElement('div');
+      meta.style.cssText = 'font-size:10px;color:#666;margin-top:3px';
+      meta.textContent = `last decision ${ago.toFixed(2)}s ago`;
+      wrap.appendChild(meta);
+    } else {
+      const note = document.createElement('div');
+      note.style.cssText = 'color:#888;font-size:11px';
+      note.textContent = 'awaiting first decision…';
+      wrap.appendChild(note);
+    }
   }
 
   private appendMaterial(m: THREE.Material, suffix: string): void {

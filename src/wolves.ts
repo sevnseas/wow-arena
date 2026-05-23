@@ -17,6 +17,7 @@ import type { Collider } from './arena';
 import { combatContactRange, emitDamageSplat, emitHealSplat, maintainCombatSpacing, type CombatTargetRef, type PreyRef, type PreyProvider } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
+import { actionToUnitVec, isMovementAction, isAbilityAction, type PolicyAgent4Ref } from './rl/runtime4';
 
 const WALK_SPEED = 1.8;
 const HUNT_SPEED = 4.0;
@@ -41,7 +42,7 @@ const WOLF_PALETTE = [
   { body: 0x6e6359, belly: 0x968a7c, ears: 0x3a342c }, // brown wolf
 ];
 
-interface WolfParts {
+export interface WolfParts {
   group: THREE.Group;
   legs: THREE.Object3D[];
   tail: THREE.Object3D;
@@ -76,9 +77,15 @@ interface Wolf {
   temperature: number;
   /** Brain-driven intent override; null = use built-in state machine. */
   brainIntent: 'idle' | 'attack' | 'flee' | null;
+  /** True when a brain (RL4) is actively steering this wolf — suppresses the
+   *  state machine's automatic prey acquisition and wander-retargeting so the
+   *  policy's chosen direction actually wins. */
+  brainSteer: boolean;
+  /** performance.now() of the last brain action — lets us detect dropouts. */
+  brainSteerAt: number;
 }
 
-function buildWolfMesh(): WolfParts {
+export function buildWolfMesh(): WolfParts {
   const palette = WOLF_PALETTE[Math.floor(Math.random() * WOLF_PALETTE.length)];
   const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.85, flatShading: true });
   const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.85, flatShading: true });
@@ -325,6 +332,8 @@ export class WolfPack implements PreyProvider {
       })(),
       temperature: 0.7 + Math.random() * 0.8,
       brainIntent: null,
+      brainSteer: false,
+      brainSteerAt: 0,
     };
     wolf.target.copy(this.pickWanderTarget(wolf));
     parts.group.position.copy(pos);
@@ -452,6 +461,70 @@ export class WolfPack implements PreyProvider {
               w.target.copy(self.pickWanderTarget(w));
             }
             break;
+          }
+        }
+      },
+    };
+  }
+
+  /**
+   * RL4 adapter — trained policy chooses a discrete Action (8 movement
+   * directions + 3 ability slots). Movement actions become a steering
+   * target ~5m in that world-space direction (existing locomotion still
+   * runs). Ability actions latch onto the nearest enemy `focus` and
+   * trigger the hunt/attack sub-state.
+   */
+  getPolicy4Agents(): PolicyAgent4Ref[] {
+    return this.wolves.filter(w => !w.dead).map(w => this.makePolicy4Agent(w));
+  }
+
+  private makePolicy4Agent(w: Wolf): PolicyAgent4Ref {
+    const self = this;
+    return {
+      id: w.id,
+      team: 'predator',
+      archetype: 'wolf',
+      size: WOLF_RADIUS,
+      get alive() { return !w.dead; },
+      get hp() { return w.hp; },
+      get maxHp() { return w.maxHp; },
+      get pos() { return { x: w.pos.x, z: w.pos.z }; },
+      applyAction(action, focus) {
+        if (w.dead) return;
+        w.brainSteer = true;
+        w.brainSteerAt = performance.now();
+        if (isMovementAction(action)) {
+          const dir = actionToUnitVec(action);
+          // Project ~5m ahead in the chosen world direction. State machine
+          // steers + animates toward it; `brainSteer` suppresses the auto
+          // hunt/wander logic that would otherwise overwrite this target.
+          const reach = 5;
+          w.target.set(w.pos.x + dir.x * reach, 0, w.pos.z + dir.z * reach);
+          if (w.state === 'feed' || w.state === 'return') w.state = 'wander';
+          if (w.state === 'hunt' || w.state === 'attack') {
+            // Drop the auto-prey latch unless we're already biting — otherwise
+            // the hunt state would re-route to prey.pos and ignore the brain.
+            const p = w.prey;
+            if (p) {
+              const dd = Math.hypot(p.pos.x - w.pos.x, p.pos.z - w.pos.z);
+              if (dd > combatContactRange(WOLF_RADIUS, p) * 1.4) {
+                w.prey = null;
+                w.aggro.clear();
+                w.state = 'wander';
+              }
+            } else {
+              w.state = 'wander';
+            }
+          }
+          w.brainIntent = 'idle';
+        } else if (isAbilityAction(action) && focus) {
+          // Ability slot → lock onto the focused enemy and pursue.
+          const ref = self.resolvePreyByPos(focus.pos.x, focus.pos.z, focus.id);
+          if (ref) {
+            w.prey = ref;
+            self.addAggro(w, ref, 5);
+            w.state = w.state === 'attack' ? 'attack' : 'hunt';
+            w.brainIntent = 'attack';
           }
         }
       },
@@ -587,14 +660,21 @@ export class WolfPack implements PreyProvider {
     if (wolf.attackTimer > 0) wolf.attackTimer = Math.max(0, wolf.attackTimer - delta);
     wolf.stateTimer += delta;
 
+    // RL4 control timed out (no brain tick in 1.5s) — return to autonomy.
+    const brainAge = performance.now() - wolf.brainSteerAt;
+    if (wolf.brainSteer && brainAge > 1500) wolf.brainSteer = false;
+
     // ----- prey acquisition / loss -----
+    // Aggro from getting hit still applies under brain control — being bitten
+    // should always force a response. Scent-acquisition is suppressed so the
+    // policy can decide *whether* to hunt vs. patrol vs. retreat.
     const aggroTarget = this.chooseAggroTarget(wolf);
     if (aggroTarget && aggroTarget !== wolf.prey) {
       wolf.prey = aggroTarget;
       wolf.state = 'hunt';
       wolf.stateTimer = 0;
     }
-    if (wolf.state === 'wander' || wolf.state === 'return') {
+    if (!wolf.brainSteer && (wolf.state === 'wander' || wolf.state === 'return')) {
       const prey = this.findNearestHuntTarget(wolf.pos, SCENT_RADIUS);
       if (prey) {
         wolf.prey = prey;
@@ -620,23 +700,37 @@ export class WolfPack implements PreyProvider {
       case 'wander': {
         const dx = wolf.target.x - wolf.pos.x;
         const dz = wolf.target.z - wolf.pos.z;
-        if (dx * dx + dz * dz < REACH_RADIUS * REACH_RADIUS) {
+        // Under brain control: don't pick a new wander target on arrival —
+        // the policy will refresh `wolf.target` on its next decision tick.
+        // Boost speed so brain-driven walks read as deliberate, not idle.
+        if (wolf.brainSteer) {
+          moveSpeed = HUNT_SPEED * 0.75;
+        } else if (dx * dx + dz * dz < REACH_RADIUS * REACH_RADIUS) {
           wolf.target.copy(this.pickWanderTarget(wolf));
         }
         break;
       }
       case 'hunt': {
         if (!wolf.prey) { wolf.state = 'wander'; break; }
-        targetX = wolf.prey.pos.x;
-        targetZ = wolf.prey.pos.z;
-        moveSpeed = HUNT_SPEED;
+        // Brain-controlled wolves steer wherever the policy points — combat is
+        // a *side effect* of being close to an enemy, not an override on
+        // movement. Without this the aggro-on-damage path would slam the
+        // hunt-state's auto-target back onto wolf.prey and the policy's
+        // chosen direction would be ignored every frame.
+        if (wolf.brainSteer) {
+          moveSpeed = HUNT_SPEED * 0.9;
+        } else {
+          targetX = wolf.prey.pos.x;
+          targetZ = wolf.prey.pos.z;
+          moveSpeed = HUNT_SPEED;
+        }
         // Scare the prey as we close in.
         wolf.prey.scare?.(wolf.pos.x, wolf.pos.z, 1500);
-        // In bite range → transition to attack
-        const dx = targetX - wolf.pos.x;
-        const dz = targetZ - wolf.pos.z;
+        // In bite range → transition to attack (regardless of who is steering).
+        const ddx = wolf.prey.pos.x - wolf.pos.x;
+        const ddz = wolf.prey.pos.z - wolf.pos.z;
         const attackRange = combatContactRange(WOLF_RADIUS, wolf.prey);
-        if (dx * dx + dz * dz < attackRange * attackRange) {
+        if (ddx * ddx + ddz * ddz < attackRange * attackRange) {
           wolf.state = 'attack';
           wolf.stateTimer = 0;
         }
@@ -644,15 +738,21 @@ export class WolfPack implements PreyProvider {
       }
       case 'attack': {
         if (!wolf.prey) { wolf.state = 'feed'; wolf.stateTimer = 0; break; }
-        targetX = wolf.prey.pos.x;
-        targetZ = wolf.prey.pos.z;
-        moveSpeed = 0; // hold position
-        // Out of bite range? Resume chase.
-        const dx = targetX - wolf.pos.x;
-        const dz = targetZ - wolf.pos.z;
+        if (wolf.brainSteer) {
+          // Keep brain in charge of facing/positioning; bite still triggers
+          // below when we're close enough.
+          moveSpeed = HUNT_SPEED * 0.6;
+        } else {
+          targetX = wolf.prey.pos.x;
+          targetZ = wolf.prey.pos.z;
+          moveSpeed = 0; // hold position
+        }
+        // Out of bite range? Resume chase (distance is always to actual prey).
+        const ddx = wolf.prey.pos.x - wolf.pos.x;
+        const ddz = wolf.prey.pos.z - wolf.pos.z;
         const attackRange = combatContactRange(WOLF_RADIUS, wolf.prey);
-        maintainCombatSpacing(wolf.pos, wolf.prey, attackRange);
-        if (dx * dx + dz * dz > (attackRange * 1.6) * (attackRange * 1.6)) {
+        if (!wolf.brainSteer) maintainCombatSpacing(wolf.pos, wolf.prey, attackRange);
+        if (ddx * ddx + ddz * ddz > (attackRange * 1.6) * (attackRange * 1.6)) {
           wolf.state = 'hunt';
           break;
         }
@@ -700,7 +800,11 @@ export class WolfPack implements PreyProvider {
     let yawDiff = desiredYaw - wolf.yaw;
     while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
     while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
-    wolf.yaw += Math.max(-TURN_RATE * delta, Math.min(TURN_RATE * delta, yawDiff));
+    // Brain-driven wolves turn fast enough to commit to a new direction
+    // within one decision interval (~0.4s) — otherwise rotating eats the
+    // whole window and translation is invisible.
+    const turnRate = wolf.brainSteer ? TURN_RATE * 3 : TURN_RATE;
+    wolf.yaw += Math.max(-turnRate * delta, Math.min(turnRate * delta, yawDiff));
 
     if (moveSpeed > 0) {
       const turnPenalty = 1 - Math.min(1, Math.abs(yawDiff) / Math.PI) * 0.55;

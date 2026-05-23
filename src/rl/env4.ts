@@ -171,24 +171,44 @@ export function step4(env4: RLEnv4, dt: number): void {
 }
 
 /** Compute per-entity reward this decision interval. */
-export function computeReward4(env4: RLEnv4, e: Entity & { lastHp: number; rewardThisEpisode: number }): number {
+export function computeReward4(
+  env4: RLEnv4,
+  e: Entity & { lastHp: number; rewardThisEpisode: number; lastEnemyDist?: number },
+): number {
   let r = 0;
 
   // Damage dealt this tick.
   const dmgEvents = env4.env.events.filter(ev => ev.type === 'damage' && ev.attackerId === e.id);
   for (const ev of dmgEvents) {
     r += ev.amount * 0.1;
-    if (ev.killed) {
-      r += 3; // kill bonus
-    }
+    if (ev.killed) r += 3;
   }
 
-  // Survival reward (small per-tick).
+  // Survival.
   r += 0.01;
 
   // Penalty for taking damage.
   const dmgTaken = Math.max(0, e.lastHp - e.hp);
   r -= dmgTaken * 0.15;
+
+  // Distance-closing shaping: predators get a dense gradient signal when they
+  // walk toward the nearest enemy. Without this, the wolf must stumble into
+  // contact range purely by chance — too sparse for REINFORCE to learn from
+  // within a reasonable training budget.
+  let nearestEnemyDist = Infinity;
+  for (const o of env4.env.entities) {
+    if (!o.alive || o.id === e.id || o.team === e.team) continue;
+    const dx = o.x - e.x, dz = o.z - e.z;
+    const d = Math.hypot(dx, dz);
+    if (d < nearestEnemyDist) nearestEnemyDist = d;
+  }
+  if (Number.isFinite(nearestEnemyDist) && e.lastEnemyDist !== undefined) {
+    // +reward for each meter closed. Magnitude chosen so closing 1m/decision
+    // dwarfs the +0.01 survival ticks but stays below the +0.1/dmg signal —
+    // dense gradient for navigation, kills still dominate the long-term return.
+    r += (e.lastEnemyDist - nearestEnemyDist) * 0.5;
+  }
+  e.lastEnemyDist = Number.isFinite(nearestEnemyDist) ? nearestEnemyDist : undefined;
 
   e.lastHp = e.hp;
   e.rewardThisEpisode += r;

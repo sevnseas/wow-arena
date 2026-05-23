@@ -17,6 +17,7 @@ import {
   type PreyState,
 } from './prey';
 import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
+import { actionToUnitVec, isMovementAction, isAbilityAction, type PolicyAgent4Ref } from './rl/runtime4';
 
 const MUTANT_RADIUS = 0.75;
 const WALK_SPEED = 2.2;
@@ -157,6 +158,8 @@ export class MutantPredator implements PreyProvider {
    *  from re-pointing prey at some other entity while the boss is locked on
    *  the player. */
   private playerLocked = false;
+  private brainSteer = false;
+  private brainSteerAt = 0;
 
   private personalityBias: Float32Array = (() => {
     const b = new Float32Array(INTENT_COUNT);
@@ -214,7 +217,11 @@ export class MutantPredator implements PreyProvider {
       }
     }
 
-    if (!this.prey) {
+    // RL4 control timeout — return to autonomous prowl/hunt after 1.5s of silence.
+    if (this.brainSteer && performance.now() - this.brainSteerAt > 1500) {
+      this.brainSteer = false;
+    }
+    if (!this.prey && !this.brainSteer) {
       this.prey = this.findNearestHuntTarget(this.pos, SCENT_RADIUS);
       if (this.prey) this.state = 'hunt';
     }
@@ -263,6 +270,45 @@ export class MutantPredator implements PreyProvider {
     this.view.setFacingYaw(Math.PI - this.yaw);
     this.view.setLocomotion(moving ? (this.state === 'hunt' ? 'run' : 'walk') : 'idle', moving ? 1 : 0);
     this.view.update(delta);
+  }
+
+  /** RL4 adapter for the boss. Locked to player when aggroed; otherwise the
+   *  trained policy steers via movement actions and triggers attacks with the
+   *  ability slots. */
+  getPolicy4Agents(): PolicyAgent4Ref[] {
+    if (this.preyState.dead) return [];
+    const self = this;
+    return [{
+      id: this.id,
+      team: 'predator',
+      archetype: 'werewolf',
+      size: MUTANT_RADIUS,
+      get alive() { return !self.preyState.dead; },
+      get hp() { return self.preyState.hp; },
+      get maxHp() { return self.preyState.maxHp; },
+      get pos() { return { x: self.pos.x, z: self.pos.z }; },
+      applyAction(action, focus) {
+        if (self.preyState.dead) return;
+        // While player-locked, ignore the brain entirely (see update()).
+        if (self.playerLocked) return;
+        self.brainSteer = true;
+        self.brainSteerAt = performance.now();
+        if (isMovementAction(action)) {
+          const dir = actionToUnitVec(action);
+          const reach = 6;
+          self.target.set(self.pos.x + dir.x * reach, 0, self.pos.z + dir.z * reach);
+          // Don't auto-lock prey; let the boss roam under brain control.
+          self.prey = null;
+          self.state = 'prowl';
+        } else if (isAbilityAction(action) && focus) {
+          const ref = self.resolveTargetByPos(focus.id, focus.pos.x, focus.pos.z);
+          if (ref) {
+            self.prey = ref;
+            self.state = 'hunt';
+          }
+        }
+      },
+    }];
   }
 
   findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {

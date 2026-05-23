@@ -12,3 +12,4 @@ export * from './env4';
 export * from './train4';
 export * from './validate4';
 export * from './train4-runner';
+export * from './runtime4';

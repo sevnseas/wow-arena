@@ -25,7 +25,7 @@ const PALETTE = [
   { body: 0xc9a87a, belly: 0xe8d5af }  // tan
 ];
 
-interface RabbitParts {
+export interface RabbitParts {
   group: THREE.Group;
   body: THREE.Object3D;
   head: THREE.Object3D;
@@ -60,7 +60,7 @@ interface Rabbit {
   temperature: number;
 }
 
-function buildRabbitMesh(): RabbitParts {
+export function buildRabbitMesh(): RabbitParts {
   const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.9, metalness: 0.0 });
   const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.9, metalness: 0.0 });

@@ -10,6 +10,7 @@ import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
 import { applyIntentToPreyState, combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState, notePreyAttacker, tickGrazeHeal } from './prey';
 import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
+import { actionToUnitVec, isMovementAction, type PolicyAgent4Ref } from './rl/runtime4';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.4;
@@ -28,7 +29,7 @@ const PALETTE = [
   { body: 0x5a3a24, belly: 0x8a6440 }  // brown
 ];
 
-interface CatParts {
+export interface CatParts {
   group: THREE.Group;
   legs: { mesh: THREE.Mesh; phase: number }[];
   tail: THREE.Object3D;
@@ -52,9 +53,13 @@ interface Cat {
   prey: PreyState;
   id: string;
   name: string;
+  /** True when RL4 is actively steering this cat — suppresses the auto
+   *  wander-retargeting that would otherwise overwrite the policy target. */
+  brainSteer?: boolean;
+  brainSteerAt?: number;
 }
 
-function buildCatMesh(): CatParts {
+export function buildCatMesh(): CatParts {
   const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.85, metalness: 0.0 });
   const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.85, metalness: 0.0 });
@@ -289,6 +294,40 @@ export class CatColony implements HoldableProvider, PreyProvider {
     };
   }
 
+  /** RL4 adapter — see WolfPack.getPolicy4Agents for design notes. */
+  getPolicy4Agents(): PolicyAgent4Ref[] {
+    return this.cats
+      .filter(c => !c.prey.dead && !c.held)
+      .map(c => this.makePolicy4Agent(c));
+  }
+
+  private makePolicy4Agent(c: Cat): PolicyAgent4Ref {
+    return {
+      id: c.id,
+      team: 'predator',
+      archetype: 'cat',
+      size: CAT_RADIUS,
+      get alive() { return !c.prey.dead && !c.held; },
+      get hp() { return c.prey.hp; },
+      get maxHp() { return c.prey.maxHp; },
+      get pos() { return { x: c.pos.x, z: c.pos.z }; },
+      applyAction(action, _focus) {
+        if (c.prey.dead || c.held) return;
+        c.brainSteer = true;
+        c.brainSteerAt = performance.now();
+        if (isMovementAction(action)) {
+          const dir = actionToUnitVec(action);
+          const reach = 4;
+          c.target.set(c.pos.x + dir.x * reach, 0, c.pos.z + dir.z * reach);
+          // Break out of grazing pause so the policy actually moves.
+          c.pauseTimer = 0;
+          // Drop any existing combat target so the brain's direction wins.
+          c.prey.combatTarget = null;
+        }
+      },
+    };
+  }
+
   findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
     let best: Cat | null = null;
     let bestSq = maxDist * maxDist;
@@ -422,19 +461,30 @@ export class CatColony implements HoldableProvider, PreyProvider {
     const dz = cat.target.z - cat.pos.z;
     const distSq = dx * dx + dz * dz;
 
+    // RL4 control timeout: drop brain steer after 1.5s without a refresh.
+    const brainAge = performance.now() - (cat.brainSteerAt ?? 0);
+    if (cat.brainSteer && brainAge > 1500) cat.brainSteer = false;
+
     if (distSq < REACH_RADIUS * REACH_RADIUS) {
-      if (Math.random() < PAUSE_CHANCE) {
-        cat.pauseTimer = PAUSE_TIME[0] + Math.random() * (PAUSE_TIME[1] - PAUSE_TIME[0]);
+      // Brain control: don't pick a new wander target on arrival — the
+      // policy refreshes `cat.target` on its next decision tick.
+      if (cat.brainSteer) {
+        // fall through to steering — keep moving until brain updates target
+      } else {
+        if (Math.random() < PAUSE_CHANCE) {
+          cat.pauseTimer = PAUSE_TIME[0] + Math.random() * (PAUSE_TIME[1] - PAUSE_TIME[0]);
+        }
+        cat.target = pickTarget(cat.bounds);
+        return;
       }
-      cat.target = pickTarget(cat.bounds);
-      return;
     }
 
     const desiredYaw = Math.atan2(dx, dz);
     let yawDiff = desiredYaw - cat.yaw;
     while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
     while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
-    const turn = Math.max(-TURN_RATE * delta, Math.min(TURN_RATE * delta, yawDiff));
+    const turnRate = cat.brainSteer ? TURN_RATE * 3 : TURN_RATE;
+    const turn = Math.max(-turnRate * delta, Math.min(turnRate * delta, yawDiff));
     cat.yaw += turn;
 
     const turnPenalty = 1 - Math.min(1, Math.abs(yawDiff) / Math.PI) * 0.6;
