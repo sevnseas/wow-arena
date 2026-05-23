@@ -146,3 +146,21 @@ export function reinforceUpdate4(policy: Policy4, traj: Step4[], gamma = 0.97): 
 
   return mean;
 }
+
+export function serializePolicy4(p: Policy4): string {
+  return JSON.stringify({
+    cfg: p.cfg,
+    W1: Array.from(p.W1), b1: Array.from(p.b1),
+    W2: Array.from(p.W2), b2: Array.from(p.b2),
+    baseline: p.baseline,
+  });
+}
+
+export function deserializePolicy4(json: string): Policy4 {
+  const obj = JSON.parse(json);
+  const p = new Policy4(obj.cfg);
+  p.W1 = new Float32Array(obj.W1); p.b1 = new Float32Array(obj.b1);
+  p.W2 = new Float32Array(obj.W2); p.b2 = new Float32Array(obj.b2);
+  p.baseline = obj.baseline ?? 0;
+  return p;
+}
