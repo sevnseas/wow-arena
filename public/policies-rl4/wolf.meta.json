@@ -1,77 +1,84 @@
 {
   "archetype": "wolf",
-  "trainedAt": "2026-05-23T21:00:04.102Z",
-  "episodesPerStage": 600,
+  "trainedAt": "2026-05-23T21:09:33.245Z",
+  "episodesPerStage": 800,
   "stages": [
     {
-      "label": "pen3",
-      "bounds": 3,
-      "spawnRadius": 2,
+      "label": "tight",
+      "minBounds": 1.5,
+      "maxBounds": 1.5,
       "visionRadius": 6
     },
     {
-      "label": "pen6",
-      "bounds": 6,
-      "spawnRadius": 4,
-      "visionRadius": 10
+      "label": "mix3",
+      "minBounds": 1.5,
+      "maxBounds": 3,
+      "visionRadius": 8
     },
     {
-      "label": "pen12",
-      "bounds": 12,
-      "spawnRadius": 8,
-      "visionRadius": 14
+      "label": "mix6",
+      "minBounds": 1.5,
+      "maxBounds": 6,
+      "visionRadius": 12
+    },
+    {
+      "label": "mix12",
+      "minBounds": 1.5,
+      "maxBounds": 12,
+      "visionRadius": 16
     },
     {
       "label": "open",
-      "bounds": 25,
-      "spawnRadius": 14,
+      "minBounds": 1.5,
+      "maxBounds": 25,
       "visionRadius": 18
     }
   ],
-  "bestEpisodeMA50": 400.07501212785087,
-  "bestStage": "pen3",
-  "bestEpisodeIndex": 592,
+  "bestEpisodeMA50": 153.01437422493416,
+  "bestStage": "open",
+  "bestEpisodeIndex": 3964,
   "killRatesByStage": {
-    "pen3": 1,
-    "pen6": 0.5166666666666667,
-    "pen12": 0.13333333333333333,
-    "open": 0.03333333333333333
+    "tight": 1,
+    "mix3": 1,
+    "mix6": 1,
+    "mix12": 0.8166666666666667,
+    "open": 0.65
   },
   "policyConfig": {
-    "hidden": 32,
+    "hidden": 64,
     "lr": 0.002,
     "baselineEMA": 0.95,
     "entropyCoef": 0.01
   },
   "weightStats": {
     "W1": {
-      "n": 4480,
-      "mean": 0.0019622312399686084,
-      "std": 0.11943051608438929,
-      "min": -0.3919246792793274,
-      "max": 0.4055664837360382
+      "n": 8960,
+      "mean": 0.00048086202529162847,
+      "std": 0.1306833714506758,
+      "min": -0.9365846514701843,
+      "max": 0.9198766350746155
     },
     "W2": {
-      "n": 352,
-      "mean": -0.014465993686413143,
-      "std": 0.2490451695927575,
-      "min": -0.8314841389656067,
-      "max": 0.8480777144432068
+      "n": 704,
+      "mean": 0.002853166099488259,
+      "std": 0.2707898678991855,
+      "min": -0.9310665726661682,
+      "max": 0.8218753337860107
     },
     "b1": {
-      "n": 32,
-      "mean": 0.0011732168666185316,
-      "std": 0.019196272711778477,
-      "min": -0.03876308724284172,
-      "max": 0.03676062077283859
+      "n": 64,
+      "mean": 0.0027653722449940688,
+      "std": 0.04158471203492769,
+      "min": -0.08887958526611328,
+      "max": 0.08737757802009583
     },
     "b2": {
       "n": 11,
-      "mean": -0.0011058863337067041,
-      "std": 0.018357639276481864,
-      "min": -0.031615011394023895,
-      "max": 0.031423840671777725
+      "mean": -0.001342670103027062,
+      "std": 0.048630190031091175,
+      "min": -0.08238869160413742,
+      "max": 0.06705376505851746
     }
   },
-  "historyLength": 2400
+  "historyLength": 4000
 }

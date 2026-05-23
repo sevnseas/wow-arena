@@ -1,77 +1,84 @@
 {
   "archetype": "werewolf",
-  "trainedAt": "2026-05-23T21:00:10.854Z",
-  "episodesPerStage": 600,
+  "trainedAt": "2026-05-23T21:10:03.553Z",
+  "episodesPerStage": 800,
   "stages": [
     {
-      "label": "pen3",
-      "bounds": 3,
-      "spawnRadius": 2,
+      "label": "tight",
+      "minBounds": 1.5,
+      "maxBounds": 1.5,
       "visionRadius": 6
     },
     {
-      "label": "pen6",
-      "bounds": 6,
-      "spawnRadius": 4,
-      "visionRadius": 10
+      "label": "mix3",
+      "minBounds": 1.5,
+      "maxBounds": 3,
+      "visionRadius": 8
     },
     {
-      "label": "pen12",
-      "bounds": 12,
-      "spawnRadius": 8,
-      "visionRadius": 14
+      "label": "mix6",
+      "minBounds": 1.5,
+      "maxBounds": 6,
+      "visionRadius": 12
+    },
+    {
+      "label": "mix12",
+      "minBounds": 1.5,
+      "maxBounds": 12,
+      "visionRadius": 16
     },
     {
       "label": "open",
-      "bounds": 25,
-      "spawnRadius": 14,
+      "minBounds": 1.5,
+      "maxBounds": 25,
       "visionRadius": 18
     }
   ],
-  "bestEpisodeMA50": 391.0103968607858,
-  "bestStage": "pen3",
-  "bestEpisodeIndex": 258,
+  "bestEpisodeMA50": 279.5960194936184,
+  "bestStage": "open",
+  "bestEpisodeIndex": 3758,
   "killRatesByStage": {
-    "pen3": 1,
-    "pen6": 0.36666666666666664,
-    "pen12": 0.08333333333333333,
-    "open": 0.016666666666666666
+    "tight": 1,
+    "mix3": 1,
+    "mix6": 1,
+    "mix12": 0.9333333333333333,
+    "open": 0.6333333333333333
   },
   "policyConfig": {
-    "hidden": 32,
+    "hidden": 64,
     "lr": 0.002,
     "baselineEMA": 0.95,
     "entropyCoef": 0.01
   },
   "weightStats": {
     "W1": {
-      "n": 4480,
-      "mean": 0.0003107583453697263,
-      "std": 0.1192539098920528,
-      "min": -0.41436418890953064,
-      "max": 0.48155903816223145
+      "n": 8960,
+      "mean": 0.0006234242381757024,
+      "std": 0.1279193008815983,
+      "min": -0.9038625359535217,
+      "max": 0.8647039532661438
     },
     "W2": {
-      "n": 352,
-      "mean": 0.028740382204473877,
-      "std": 0.26070170785226554,
-      "min": -0.6684942841529846,
-      "max": 0.7761696577072144
+      "n": 704,
+      "mean": 0.007457819260356369,
+      "std": 0.2704424712564846,
+      "min": -0.8820663094520569,
+      "max": 0.8006971478462219
     },
     "b1": {
-      "n": 32,
-      "mean": 0.002162695725701269,
-      "std": 0.013423501445475215,
-      "min": -0.029602406546473503,
-      "max": 0.02366246096789837
+      "n": 64,
+      "mean": -0.0025200445071504873,
+      "std": 0.030816621257614637,
+      "min": -0.0664108470082283,
+      "max": 0.06570857018232346
     },
     "b2": {
       "n": 11,
-      "mean": -0.0004898000466213985,
-      "std": 0.014312496288349807,
-      "min": -0.020758185535669327,
-      "max": 0.021355612203478813
+      "mean": -0.0005547332746738738,
+      "std": 0.034901954936605833,
+      "min": -0.05670710653066635,
+      "max": 0.04185093939304352
     }
   },
-  "historyLength": 2400
+  "historyLength": 4000
 }

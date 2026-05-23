@@ -34,12 +34,37 @@ const epsPerStage = Number(process.argv[3] ?? 1500);
 /** Curriculum stages — tight pen → moderate → open arena. Spawn radius is
  *  capped to slightly less than pen radius so the rabbit always starts
  *  reachable. */
+// Each stage *widens the range* of pen sizes the policy trains on, instead of
+// fixing one pen per stage. Avoids catastrophic forgetting: when stage 2 adds
+// pen3 to the mix, the policy still sees pen1.5 episodes too and doesn't
+// drift away from the easy-case solution.
+//
+//   stage 1: bounds ∈ [1.5, 1.5]      — pure tight pen, learn contact
+//   stage 2: bounds ∈ [1.5, 3]        — add medium, keep contact reps
+//   stage 3: bounds ∈ [1.5, 6]
+//   stage 4: bounds ∈ [1.5, 12]
+//   stage 5: bounds ∈ [1.5, 25]       — full open arena in the mix
 const STAGES = [
-  { label: 'pen3',   bounds: 3,  spawnRadius: 2,  visionRadius: 6  },
-  { label: 'pen6',   bounds: 6,  spawnRadius: 4,  visionRadius: 10 },
-  { label: 'pen12',  bounds: 12, spawnRadius: 8,  visionRadius: 14 },
-  { label: 'open',   bounds: 25, spawnRadius: 14, visionRadius: 18 },
+  { label: 'tight',  minBounds: 1.5, maxBounds: 1.5, visionRadius: 6  },
+  { label: 'mix3',   minBounds: 1.5, maxBounds: 3,   visionRadius: 8  },
+  { label: 'mix6',   minBounds: 1.5, maxBounds: 6,   visionRadius: 12 },
+  { label: 'mix12',  minBounds: 1.5, maxBounds: 12,  visionRadius: 16 },
+  { label: 'open',   minBounds: 1.5, maxBounds: 25,  visionRadius: 18 },
 ];
+
+// Per-archetype physical params matched to the LIVE game packs
+// (wolves.ts / cats.ts / rabbits.ts / mutant-predator.ts) so a policy trained
+// in env4 sees the same speed / contact range it'll see when deployed. Was
+// previously hard-coded to size=1.0 / speed=8 — combat contact range was
+// twice the live game's, so close-call learnings didn't transfer.
+const PHYS = {
+  wolf:     { size: 0.50, speed: 4.0, attackCooldown: 0.4, hp: 60 },
+  cat:      { size: 0.38, speed: 4.5, attackCooldown: 0.4, hp: 45 },
+  rabbit:   { size: 0.28, speed: 2.6, attackCooldown: 1.0, hp: 30 },
+  cow:      { size: 0.70, speed: 1.8, attackCooldown: 1.0, hp: 70 },
+  werewolf: { size: 0.75, speed: 4.6, attackCooldown: 0.5, hp: 180 },
+  dog:      { size: 0.45, speed: 3.5, attackCooldown: 0.5, hp: 50 },
+};
 
 const TARGETS = {
   wolf:     { agentType: 'wolf',     enemies: [{ type: 'rabbit', count: 1 }], seed: 42  },
@@ -56,9 +81,16 @@ for (const archKey of archs) {
   const target = TARGETS[archKey];
   console.log(`\n=== ${archKey.toUpperCase()} · ${epsPerStage} eps × ${STAGES.length} stages ===`);
 
-  const cfg = { hidden: 32, lr: 0.002, baselineEMA: 0.95, entropyCoef: 0.01 };
+  // Bigger network so the policy has the capacity to represent both
+  // "rabbit-in-pen1.5" and "rabbit-at-12m" with one set of weights.
+  const cfg = { hidden: 64, lr: 0.002, baselineEMA: 0.95, entropyCoef: 0.01 };
   const rng = new Rng(target.seed);
   const policy = new Policy4(cfg, rng);
+  // We snapshot the best by trailing-MA *of the last stage only*. Earlier
+  // stages have higher returns (easy pen, dense reward) but the policy
+  // overfits to the narrow regime and doesn't transfer. The last stage
+  // includes the full pen-size mixture, so its best snapshot is the best
+  // generalist.
   let bestPolicy = clone(policy);
   let bestMA = -Infinity;
   let bestStage = '';
@@ -66,19 +98,31 @@ for (const archKey of archs) {
   const fullHistory = [];
   const fullMA = [];
 
-  for (const stage of STAGES) {
-    console.log(`\n  --- stage ${stage.label} (bounds=${stage.bounds}m, spawn≤${stage.spawnRadius}m, vis=${stage.visionRadius}m) ---`);
+  for (let si = 0; si < STAGES.length; si++) {
+    const stage = STAGES[si];
+    const isFinal = si === STAGES.length - 1;
+    console.log(`\n  --- stage ${stage.label} (bounds ∈ [${stage.minBounds},${stage.maxBounds}]m, vis=${stage.visionRadius}m) ---`);
     const r = runStage(policy, target, stage, epsPerStage,
-      (snap, ep, ma) => {
-        if (ma > bestMA) {
-          bestMA = ma; bestPolicy = snap; bestStage = stage.label; bestEp = fullHistory.length + ep;
-        }
-      });
+      // Only consider snapshots from the FINAL stage as the "best" deploy
+      // candidate. During earlier stages we just train; we don't risk
+      // freezing an overfit pen1.5-only policy as the deployed weights.
+      isFinal
+        ? (snap, ep, ma) => {
+            if (ma > bestMA) {
+              bestMA = ma; bestPolicy = snap; bestStage = stage.label; bestEp = fullHistory.length + ep;
+            }
+          }
+        : undefined);
     fullHistory.push(...r.history);
     fullMA.push(...r.ma);
-    const kr = killRate(bestPolicy, target, stage);
-    console.log(`    end-of-stage best ma50: ${r.bestMA.toFixed(1)} | global best ${bestMA.toFixed(1)}(${bestStage}@${bestEp}) | kill-rate(${stage.label}) ${(kr * 100).toFixed(0)}%`);
+    // Eval against this stage's max pen size so we see kill-rate per
+    // increasing difficulty as the curriculum progresses.
+    const kr = killRate(policy, target, stage);
+    console.log(`    end-of-stage best ma50: ${r.bestMA.toFixed(1)} | kill-rate(${stage.label}@max) ${(kr * 100).toFixed(0)}%`);
   }
+  // If the final stage never met the bestMA threshold (rare), at least
+  // persist the final policy state — it's still trained.
+  if (bestMA === -Infinity) bestPolicy = clone(policy);
 
   const outFile = resolve(outDir, `${archKey}.json`);
   writeFileSync(outFile, serializePolicy4(bestPolicy));
@@ -130,7 +174,6 @@ function runStage(policy, target, stage, totalEpisodes, onBest) {
   const stepsPerEp = 300;
   const decisionInterval = 5;
   const batchSize = 8;
-  const envCfg = { bounds: stage.bounds, visionRadius: stage.visionRadius };
 
   const history = [];
   const ma = [];
@@ -140,20 +183,33 @@ function runStage(policy, target, stage, totalEpisodes, onBest) {
   let batchTrajs = [];
 
   for (let ep = 0; ep < totalEpisodes; ep++) {
+    // Sample pen bounds uniformly across the stage's range. With minBounds=
+    // maxBounds this collapses to a fixed pen (stage 1). Wider stages mix
+    // easy + hard episodes so old skills don't get unlearned.
+    const bounds = stage.minBounds + (stage.maxBounds - stage.minBounds) * Math.random();
+    const envCfg = { bounds, visionRadius: stage.visionRadius };
     const env4 = createEnv4(envCfg, target.seed + ep);
+    const aph = PHYS[target.agentType];
     const agent = spawn4(env4, {
       archetype: target.agentType, team: 'predator',
       x: (Math.random() - 0.5) * 0.5, z: (Math.random() - 0.5) * 0.5,
-      hp: 100, maxHp: 100, size: 1.0, speed: 8, attackCooldown: 0.3,
+      hp: aph.hp, maxHp: aph.hp, size: aph.size, speed: aph.speed,
+      attackCooldown: aph.attackCooldown,
     });
     for (const { type, count } of target.enemies) {
+      const eph = PHYS[type];
+      // Spawn enemy in [minSpawn, bounds - small_margin] so it always starts
+      // inside the pen and not in contact.
+      const minSpawn = aph.size + eph.size + 0.4;
+      const maxSpawn = Math.max(minSpawn + 0.1, bounds - eph.size - 0.2);
       for (let i = 0; i < count; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const rr = Math.max(0.6, stage.spawnRadius * Math.sqrt(Math.random()));
+        const rr = minSpawn + (maxSpawn - minSpawn) * Math.sqrt(Math.random());
         spawn4(env4, {
           archetype: type, team: 'prey',
           x: Math.cos(ang) * rr, z: Math.sin(ang) * rr,
-          hp: 60, maxHp: 60, size: 0.8, speed: 6, attackCooldown: 0.5,
+          hp: eph.hp, maxHp: eph.hp, size: eph.size, speed: eph.speed,
+          attackCooldown: eph.attackCooldown,
         });
       }
     }
@@ -175,6 +231,9 @@ function runStage(policy, target, stage, totalEpisodes, onBest) {
     let epReturn = 0;
     for (const s of traj) epReturn += s.reward;
     history.push(epReturn);
+    // Mark the final step as an episode boundary so γ doesn't leak into the
+    // returns of subsequent episodes inside the mini-batch.
+    if (traj.length > 0) traj[traj.length - 1].episodeEnd = true;
 
     windowSum += epReturn;
     sumWindow.push(epReturn);
@@ -204,24 +263,34 @@ function runStage(policy, target, stage, totalEpisodes, onBest) {
 function clone(p) { return deserializePolicy4(serializePolicy4(p)); }
 
 function killRate(policy, target, stage, trials = 40) {
-  const envCfg = { bounds: stage.bounds, visionRadius: stage.visionRadius };
+  // For verification we want a FIXED pen size, not a range. Stages' label
+  // names the canonical pen we eval at; map back from minBounds/maxBounds.
+  const fixedBounds = stage.maxBounds;
+  const envCfg = { bounds: fixedBounds, visionRadius: stage.visionRadius };
+  const spawnRadius = Math.max(1, fixedBounds * 0.85);
   let kills = 0;
+  const aph = PHYS[target.agentType];
   for (let t = 0; t < trials; t++) {
     const env4 = createEnv4(envCfg, 99999 + t);
     const agent = spawn4(env4, {
       archetype: target.agentType, team: 'predator',
       x: (Math.random() - 0.5) * 0.5, z: (Math.random() - 0.5) * 0.5,
-      hp: 100, maxHp: 100, size: 1.0, speed: 8, attackCooldown: 0.3,
+      hp: aph.hp, maxHp: aph.hp, size: aph.size, speed: aph.speed,
+      attackCooldown: aph.attackCooldown,
     });
     const enemies = [];
     for (const { type, count } of target.enemies) {
+      const eph = PHYS[type];
+      const minSpawn = aph.size + eph.size + 0.4;
+      const maxSpawn = Math.max(minSpawn + 0.1, spawnRadius);
       for (let i = 0; i < count; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const rr = Math.max(0.6, stage.spawnRadius * Math.sqrt(Math.random()));
+        const rr = minSpawn + (maxSpawn - minSpawn) * Math.sqrt(Math.random());
         enemies.push(spawn4(env4, {
           archetype: type, team: 'prey',
           x: Math.cos(ang) * rr, z: Math.sin(ang) * rr,
-          hp: 60, maxHp: 60, size: 0.8, speed: 6, attackCooldown: 0.5,
+          hp: eph.hp, maxHp: eph.hp, size: eph.size, speed: eph.speed,
+          attackCooldown: eph.attackCooldown,
         }));
       }
     }

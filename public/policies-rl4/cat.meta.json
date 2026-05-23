@@ -1,77 +1,84 @@
 {
   "archetype": "cat",
-  "trainedAt": "2026-05-23T21:00:07.458Z",
-  "episodesPerStage": 600,
+  "trainedAt": "2026-05-23T21:09:52.991Z",
+  "episodesPerStage": 800,
   "stages": [
     {
-      "label": "pen3",
-      "bounds": 3,
-      "spawnRadius": 2,
+      "label": "tight",
+      "minBounds": 1.5,
+      "maxBounds": 1.5,
       "visionRadius": 6
     },
     {
-      "label": "pen6",
-      "bounds": 6,
-      "spawnRadius": 4,
-      "visionRadius": 10
+      "label": "mix3",
+      "minBounds": 1.5,
+      "maxBounds": 3,
+      "visionRadius": 8
     },
     {
-      "label": "pen12",
-      "bounds": 12,
-      "spawnRadius": 8,
-      "visionRadius": 14
+      "label": "mix6",
+      "minBounds": 1.5,
+      "maxBounds": 6,
+      "visionRadius": 12
+    },
+    {
+      "label": "mix12",
+      "minBounds": 1.5,
+      "maxBounds": 12,
+      "visionRadius": 16
     },
     {
       "label": "open",
-      "bounds": 25,
-      "spawnRadius": 14,
+      "minBounds": 1.5,
+      "maxBounds": 25,
       "visionRadius": 18
     }
   ],
-  "bestEpisodeMA50": 397.17910169344157,
-  "bestStage": "pen3",
-  "bestEpisodeIndex": 588,
+  "bestEpisodeMA50": 75.37157546133311,
+  "bestStage": "open",
+  "bestEpisodeIndex": 3937,
   "killRatesByStage": {
-    "pen3": 0.9833333333333333,
-    "pen6": 0.48333333333333334,
-    "pen12": 0.21666666666666667,
-    "open": 0.08333333333333333
+    "tight": 1,
+    "mix3": 0.9833333333333333,
+    "mix6": 0.6166666666666667,
+    "mix12": 0.11666666666666667,
+    "open": 0.06666666666666667
   },
   "policyConfig": {
-    "hidden": 32,
+    "hidden": 64,
     "lr": 0.002,
     "baselineEMA": 0.95,
     "entropyCoef": 0.01
   },
   "weightStats": {
     "W1": {
-      "n": 4480,
-      "mean": -0.0005391848459177189,
-      "std": 0.11853938654238173,
-      "min": -0.3925246000289917,
-      "max": 0.4409979581832886
+      "n": 8960,
+      "mean": -0.0010698357798617053,
+      "std": 0.12849780610190611,
+      "min": -0.9733340740203857,
+      "max": 0.9559028148651123
     },
     "W2": {
-      "n": 352,
-      "mean": -0.019102939499134663,
-      "std": 0.260470330592497,
-      "min": -0.7271282076835632,
-      "max": 0.6857707500457764
+      "n": 704,
+      "mean": -0.0009472397268423679,
+      "std": 0.260647302883005,
+      "min": -0.7401050925254822,
+      "max": 0.6656367778778076
     },
     "b1": {
-      "n": 32,
-      "mean": 0.00012016305026918417,
-      "std": 0.013000545561558208,
-      "min": -0.023665571585297585,
-      "max": 0.026363128796219826
+      "n": 64,
+      "mean": -0.0028716999963762646,
+      "std": 0.03921524867722485,
+      "min": -0.11152389645576477,
+      "max": 0.07648805528879166
     },
     "b2": {
       "n": 11,
-      "mean": 0.0017763572501611304,
-      "std": 0.014260806507947895,
-      "min": -0.02692260406911373,
-      "max": 0.03230336681008339
+      "mean": -0.0013787285848097367,
+      "std": 0.04625687560326804,
+      "min": -0.06812914460897446,
+      "max": 0.059817031025886536
     }
   },
-  "historyLength": 2400
+  "historyLength": 4000
 }

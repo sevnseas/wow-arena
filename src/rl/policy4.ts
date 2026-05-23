@@ -95,6 +95,10 @@ export interface Step4 {
   action: number;
   reward: number;
   temperature: number;
+  /** True iff this is the LAST step of an episode. When mini-batching across
+   *  multiple episodes, this tells the return calculation to reset the
+   *  accumulator so γ doesn't leak across the boundary. */
+  episodeEnd?: boolean;
 }
 
 /** Adam hyperparams. β1=0.9, β2=0.999, ε=1e-8 are the defaults from the
@@ -122,9 +126,17 @@ function adamStep(
 
 export function reinforceUpdate4(policy: Policy4, traj: Step4[], gamma = 0.97): number {
   if (traj.length === 0) return 0;
+  // Discounted return per step. When the trajectory is a concatenation of
+  // multiple episodes (mini-batch), reset the accumulator at each episode
+  // boundary — otherwise rewards from episode k+1 leak backward into the
+  // returns computed for episode k.
   const G = new Float32Array(traj.length);
   let acc = 0;
-  for (let t = traj.length - 1; t >= 0; t--) { acc = traj[t].reward + gamma * acc; G[t] = acc; }
+  for (let t = traj.length - 1; t >= 0; t--) {
+    if (traj[t].episodeEnd) acc = 0;
+    acc = traj[t].reward + gamma * acc;
+    G[t] = acc;
+  }
   let mean = 0; for (let t = 0; t < G.length; t++) mean += G[t]; mean /= G.length;
   policy.baseline = policy.cfg.baselineEMA * policy.baseline + (1 - policy.cfg.baselineEMA) * mean;
   const adv = new Float32Array(G.length);
