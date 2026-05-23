@@ -33,8 +33,22 @@ export const enum Intent {
 }
 export const INTENT_COUNT = 5;
 
-/** Feature vector dimension fed to the neural brain (Tier 1). */
-export const STATE_DIM = 7;
+/**
+ * Feature vector fed to the neural brain (Tier 1). Indices:
+ *   0  self_hp_pct          — current HP fraction
+ *   1  self_status           — 0 normal / 0.5 stunned / 1 blinded
+ *   2  focused_entity_type   — categorical / 3 (0=none, 1=wolf, 2=rabbit, 3=cow…)
+ *   3  focused_entity_hp     — fraction
+ *   4  focused_entity_dist   — normalised by visionRadius
+ *   5  ally_danger_max       — 1 - min(allyHpFrac), i.e. how hurt the worst ally is
+ *   6  enemy_pressure_count  — # hostiles currently focusing me / 5
+ *   7  herd_panic            — magnitude of nearby ally-damage signal (rl2 §1A)
+ *   8  pack_readiness        — # same-team allies also targeting our focus / 4
+ *   9  target_unawareness    — 1 if focus is fleeing / hidden / facing away
+ *   10 resource_density      — nearby grass nutrition (grazers care most)
+ *   11 energy_reserve        — HP-as-proxy for hunger/stamina (rl2 §1B)
+ */
+export const STATE_DIM = 12;
 
 export interface EntityInit {
   archetype: Archetype;

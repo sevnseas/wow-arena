@@ -163,14 +163,16 @@ export class RLEnv {
     return best;
   }
 
-  /** Build the 7-dim state vector for entity `e`. Matches entity-policies.md §3. */
+  /** Build the 12-dim state vector for entity `e`. See STATE_DIM doc-comment. */
   observe(e: Entity, out: Float32Array, offset = 0): Entity | null {
     const focus = this.pickFocus(e);
     e.focusedId = focus?.id ?? null;
 
-    // Ally danger: lowest HP fraction among same-team neighbours (excluding self).
     let allyDanger = 1.0;
     let pressure = 0;
+    let herdPanic = 0;        // ∑ (damage-recency * proximity) over allies
+    let packReadiness = 0;    // # same-team allies also targeting our focus
+    const recentDmgWindow = 2.0; // seconds
     const visSq = this.config.visionRadius * this.config.visionRadius;
     for (const o of this.entities) {
       if (!o.alive || o.id === e.id) continue;
@@ -179,6 +181,15 @@ export class RLEnv {
       if (d2 > visSq) continue;
       if (o.team === e.team) {
         allyDanger = Math.min(allyDanger, o.hp / o.maxHp);
+        // Herd panic: a recently-hit ally pulls the herd's attention.
+        const sinceHit = (this.tick - o.lastHitTick) * this.config.dt;
+        if (sinceHit < recentDmgWindow) {
+          const recency = 1 - sinceHit / recentDmgWindow;
+          const proximity = 1 - Math.sqrt(d2) / this.config.visionRadius;
+          herdPanic += recency * proximity;
+        }
+        // Pack readiness: ally has the same focus → coordinated strike likely.
+        if (focus && o.focusedId === focus.id) packReadiness++;
       } else if (o.attackerId === e.id || (o.currentIntent === Intent.Attack && o.focusedId === e.id)) {
         pressure++;
       }
@@ -188,6 +199,9 @@ export class RLEnv {
       ? focus.archetype === 'wolf' ? 1
       : focus.archetype === 'rabbit' ? 2
       : focus.archetype === 'cow' ? 3
+      : focus.archetype === 'cat' ? 4
+      : focus.archetype === 'dog' ? 5
+      : focus.archetype === 'werewolf' ? 6
       : 0
       : 0;
     const focusHp = focus ? focus.hp / focus.maxHp : 0;
@@ -195,13 +209,50 @@ export class RLEnv {
       ? Math.min(1, Math.hypot(focus.x - e.x, focus.z - e.z) / this.config.visionRadius)
       : 1;
 
+    // Target unawareness: focus is hidden, fleeing, or facing away from us.
+    // Proxy "facing away" via velocity direction vs. line-to-self.
+    let unawareness = 0;
+    if (focus) {
+      if (focus.hidden) unawareness = 1;
+      else if (focus.currentIntent === Intent.Flee) unawareness = 0.8;
+      else {
+        const vmag = Math.hypot(focus.vx, focus.vz);
+        if (vmag > 0.3) {
+          const toMeX = e.x - focus.x, toMeZ = e.z - focus.z;
+          const toMeMag = Math.hypot(toMeX, toMeZ) || 1;
+          const dot = (focus.vx * toMeX + focus.vz * toMeZ) / (vmag * toMeMag);
+          // dot=1 → moving toward us (aware), dot=-1 → moving away (unaware).
+          unawareness = Math.max(0, (1 - dot) * 0.5);
+        }
+      }
+    }
+
+    // Resource density: nutrition available within a short forage radius.
+    let resourceDensity = 0;
+    const forageR2 = 64; // 8m
+    for (const g of this.grass) {
+      if (g.nutrition <= 0) continue;
+      const d2g = (g.x - e.x) * (g.x - e.x) + (g.z - e.z) * (g.z - e.z);
+      if (d2g < forageR2) resourceDensity += g.nutrition / this.config.grassNutrition;
+    }
+    resourceDensity = Math.min(1, resourceDensity / 3);
+
+    // Energy reserve: HP-as-proxy for hunger/stamina. For grazers grazingUntil
+    // damageBuff pushes this above 1 — capped to 1 for the brain.
+    const energyReserve = Math.min(1, e.hp / e.maxHp + e.damageBuff * 0.3);
+
     out[offset + 0] = e.hp / e.maxHp;
     out[offset + 1] = e.status / 2;
-    out[offset + 2] = focusType / 3;
+    out[offset + 2] = focusType / 6;
     out[offset + 3] = focusHp;
     out[offset + 4] = focusDist;
     out[offset + 5] = 1 - allyDanger;
     out[offset + 6] = Math.min(1, pressure / 5);
+    out[offset + 7] = Math.min(1, herdPanic);
+    out[offset + 8] = Math.min(1, packReadiness / 4);
+    out[offset + 9] = unawareness;
+    out[offset + 10] = resourceDensity;
+    out[offset + 11] = energyReserve;
     return focus;
   }
 

@@ -12,6 +12,9 @@ import {
   kitingCheck,
   targetLockCheck,
   stochasticVarianceCheck,
+  cowTest,
+  packSyncCheck,
+  herdCohesionCheck,
   reinforceUpdate,
   type Step,
   type PolicyAgentRef,
@@ -303,6 +306,29 @@ describe('Emergent low-HP healing behavior', () => {
     }
     expect(wolf.hidden).toBe(true);
     expect(wolf.hp).toBeGreaterThan(50);
+  });
+});
+
+describe('rl2 §4 emergent-behavior validators are wired and observable', () => {
+  // We don't assert hard thresholds (those need full training to land) — just
+  // that the validators run, return well-formed metrics, and respond to their
+  // inputs. The trained values are checked in the train-rl.mjs run output.
+  it('cowTest returns finite metrics for an untrained policy', () => {
+    const r = cowTest(new Policy(), { cows: 4, ticks: 60 });
+    expect(Number.isFinite(r.startMeanDist)).toBe(true);
+    expect(Number.isFinite(r.endMeanDist)).toBe(true);
+    expect(r.cowAttackProbAfter).toBeGreaterThanOrEqual(0);
+    expect(r.cowAttackProbAfter).toBeLessThanOrEqual(1);
+  });
+  it('packSyncCheck reports a syncRate in [0,1]', () => {
+    const r = packSyncCheck(new Policy());
+    expect(r.syncRate).toBeGreaterThanOrEqual(0);
+    expect(r.syncRate).toBeLessThanOrEqual(1);
+  });
+  it('herdCohesionCheck returns a before/after comparison', () => {
+    const r = herdCohesionCheck(new Policy());
+    expect(r.beforeRadius).toBeGreaterThan(0);
+    expect(typeof r.tightened).toBe('boolean');
   });
 });
 

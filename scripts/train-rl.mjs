@@ -10,6 +10,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   train, kitingCheck, targetLockCheck, stochasticVarianceCheck, gangUpCheck,
+  cowTest, packSyncCheck, herdCohesionCheck,
   serializePolicy, ARCHETYPES,
 } from '../src/rl/index.ts';
 
@@ -32,6 +33,12 @@ const v = stochasticVarianceCheck(registry.get('wolf'));
 console.log(`  Stoch variance:  ${v.uniqueIntentSequences} unique action streams across 3 wolves`);
 const g = gangUpCheck(registry.get('wolf'));
 console.log(`  Gang-up:         attackRate=${(g.attackRate * 100).toFixed(1)}% bossKilled=${g.bossKilled}`);
+const c = cowTest(registry.get('cow'));
+console.log(`  Cow Test:        meanDist ${c.startMeanDist.toFixed(2)} → ${c.endMeanDist.toFixed(2)}  P(attack)=${(c.cowAttackProbAfter*100).toFixed(1)}%`);
+const ps = packSyncCheck(registry.get('wolf'));
+console.log(`  Pack Sync:       sync-tick rate=${(ps.syncRate*100).toFixed(1)}%  peak P(Attack) mean=${(ps.attackPeakMean*100).toFixed(1)}%`);
+const hc = herdCohesionCheck(registry.get('cow'));
+console.log(`  Herd Cohesion:   pairwise dist ${hc.beforeRadius.toFixed(2)} → ${hc.afterRadius.toFixed(2)}  tightened=${hc.tightened}`);
 
 const outDir = resolve(here, '../public/policies');
 mkdirSync(outDir, { recursive: true });

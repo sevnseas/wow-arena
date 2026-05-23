@@ -281,34 +281,65 @@ export class PolicyDriver {
     return best;
   }
 
+  /** Mirror of RLEnv.observe — keep these in sync; brains trained headlessly
+   *  must see the same feature layout in the live game. */
   private observe(a: PolicyAgentRef, focus: PolicyAgentRef | null, out: Float32Array): void {
     let allyDanger = 1.0;
     let pressure = 0;
-    const r2 = this.cfg.visionRadius * this.cfg.visionRadius;
+    let herdPanic = 0;
+    let packReadiness = 0;
+    const r = this.cfg.visionRadius;
+    const r2 = r * r;
+    const lastDec = focus ? this.decisions.get(focus.id) : null;
     for (const o of this.agents) {
       if (!o.alive || o.id === a.id) continue;
       const dx = o.pos.x - a.pos.x, dz = o.pos.z - a.pos.z;
       const d2 = dx * dx + dz * dz;
       if (d2 > r2) continue;
-      if (o.team === a.team) allyDanger = Math.min(allyDanger, o.hp / o.maxHp);
-      else if (Math.sqrt(d2) < (o.size + a.size + 2)) pressure++;
+      if (o.team === a.team) {
+        allyDanger = Math.min(allyDanger, o.hp / o.maxHp);
+        // Was this ally hit recently? (use lastAttackerId as a proxy signal)
+        if (o.attackerId) {
+          const proximity = 1 - Math.sqrt(d2) / r;
+          herdPanic += proximity * 0.5; // conservative magnitude
+        }
+        // Same focus → coordinated strike candidate.
+        const od = this.decisions.get(o.id);
+        if (focus && od?.focusId === focus.id) packReadiness++;
+      } else if (Math.sqrt(d2) < (o.size + a.size + 2)) pressure++;
     }
     const focusType = focus
       ? focus.archetype === 'wolf' ? 1
       : focus.archetype === 'rabbit' ? 2
       : focus.archetype === 'cow' ? 3
+      : focus.archetype === 'cat' ? 4
+      : focus.archetype === 'dog' ? 5
+      : focus.archetype === 'werewolf' ? 6
       : 0
       : 0;
+    // Unawareness: hidden / recently fled.
+    let unaware = 0;
+    if (focus) {
+      if (lastDec?.intent === Intent.Flee) unaware = 0.8;
+      // No velocity available on PolicyAgentRef; rely on intent only.
+    }
     out[0] = a.hp / a.maxHp;
     out[1] = a.status / 2;
-    out[2] = focusType / 3;
+    out[2] = focusType / 6;
     out[3] = focus ? focus.hp / focus.maxHp : 0;
     out[4] = focus
-      ? Math.min(1, Math.hypot(focus.pos.x - a.pos.x, focus.pos.z - a.pos.z) / this.cfg.visionRadius)
+      ? Math.min(1, Math.hypot(focus.pos.x - a.pos.x, focus.pos.z - a.pos.z) / r)
       : 1;
     out[5] = 1 - allyDanger;
     out[6] = Math.min(1, pressure / 5);
-    // Final intent count sanity (not in vector, just keeps INTENT_COUNT linked).
+    out[7] = Math.min(1, herdPanic);
+    out[8] = Math.min(1, packReadiness / 4);
+    out[9] = unaware;
+    // Resource density / energy reserve aren't observable in the live runtime
+    // (no grass + no internal energy model yet) — leave at 0. The brain can
+    // still rely on the headless-trained signal where this matters most.
+    out[10] = 0;
+    out[11] = a.hp / a.maxHp;
     void INTENT_COUNT;
   }
 }

@@ -71,20 +71,31 @@ function shapedReward(track: AgentTrack, env: RLEnv): number {
   let r = 0;
   let damageDealt = 0;
   let killBonus = 0;
+  let attackedHerdAttacker = false; // for cow team-credit
   for (const ev of env.events) {
     if (ev.attackerId === e.id) {
       damageDealt += ev.amount;
       if (ev.killed) {
-        // Find the victim to scale the kill bonus by their toughness — eating
-        // a werewolf is *much* more valuable than eating a rabbit.
         const victim = env.entities[ev.victimId];
         const tough = victim ? victim.maxHp / 30 : 1;
         killBonus += 6 + tough * 4;
       }
+      // rl2 §1A: cow defending the herd — extra credit when the wolf we hit
+      // had recently chewed on an ally.
+      const victim = env.entities[ev.victimId];
+      if (victim && victim.team !== e.team) {
+        for (const ally of env.entities) {
+          if (ally.alive && ally.team === e.team && ally.id !== e.id
+              && ally.attackerId === victim.id
+              && (env.tick - ally.lastHitTick) * env.config.dt < 3.0) {
+            attackedHerdAttacker = true;
+            break;
+          }
+        }
+      }
     }
   }
   const damageTaken = Math.max(0, track.lastHp - e.hp);
-  // Healing this decision was already tracked on the entity.
   const healed = e.healedThisDecision;
   e.healedThisDecision = 0;
   track.lastHp = e.hp;
@@ -92,15 +103,29 @@ function shapedReward(track: AgentTrack, env: RLEnv): number {
   switch (e.archetype) {
     case 'rabbit':
     case 'cow': {
-      r += 0.25;                          // survival tick
-      r += healed * 0.25;                 // grazing payoff
-      r += e.damageBuff * 0.05;           // buff matters slowly
+      r += 0.25;
+      r += healed * 0.25;
+      r += e.damageBuff * 0.05;
       r -= damageTaken * 0.18;
       if (!e.alive) r -= 8;
+      // Cows: shared team-credit + defender bonus (rl2 §1A).
+      if (e.archetype === 'cow') {
+        if (attackedHerdAttacker) r += damageDealt * 0.7 + 5.0;
+        // Exploration signal: the herd is under attack and this cow picks
+        // Attack — pay it even before contact, so the policy can climb out
+        // of the "flee is safest" local minimum and discover defending pays.
+        const herdPanic = computeHerdPanic(env, e);
+        if (herdPanic > 0.1) {
+          if (e.currentIntent === Intent.Attack) r += 2.0 * herdPanic;
+          // Penalise fleeing while the herd is under attack — the policy
+          // has to physically choose between solidarity and self-preservation.
+          if (e.currentIntent === Intent.Flee) r -= 1.0 * herdPanic;
+        }
+        if (!e.alive) r += 5; // unwind a chunk of the -8 prey death penalty
+      }
       break;
     }
     case 'cat': {
-      // Cats live by eating rabbits — strong kill payoff, avoid wolves.
       r += damageDealt * 0.08 + killBonus;
       r -= damageTaken * 0.15;
       r += healed * 0.05;
@@ -108,24 +133,44 @@ function shapedReward(track: AgentTrack, env: RLEnv): number {
       break;
     }
     case 'dog': {
-      // Dogs reward defending: damage to predators near friendly prey.
       r += damageDealt * 0.12 + killBonus * 0.8;
-      r += 0.05;                          // small per-decision presence bonus
+      r += 0.05;
       r -= damageTaken * 0.12;
       if (!e.alive) r -= 6;
       break;
     }
     case 'wolf': {
-      // Wolves: hunt aggressively, but learning to Hide when wounded helps.
-      r += damageDealt * 0.1 + killBonus;
-      r += healed * 0.08;                 // payoff for successful hide-to-heal
+      // rl2 §1C: stalking pack — coordination matters.
+      const focus = e.focusedId !== null ? env.entities[e.focusedId] : null;
+      let packCount = 0;
+      if (focus) {
+        for (const o of env.entities) {
+          if (!o.alive || o.id === e.id) continue;
+          if (o.team === e.team && o.focusedId === focus.id) packCount++;
+        }
+      }
+      const synced = packCount >= 1; // at least one ally also on the same target
+      if (damageDealt > 0) {
+        if (synced) {
+          r += damageDealt * 0.25 + killBonus * 1.5; // big bonus for joint strike
+        } else {
+          r += damageDealt * 0.02 + killBonus * 0.3; // soloing barely pays
+          r -= 1.5;                                  // explicit coordination penalty
+        }
+      }
+      // Direct shaping: encourage selecting Attack only when pack_readiness > 0.
+      // This adds a tiny per-decision signal that pushes the brain to read
+      // feature index 8 (pack_readiness) and condition on it.
+      if (e.currentIntent === Intent.Attack && focus) {
+        if (packCount === 0) r -= 0.3;
+        else r += 0.1 * packCount;
+      }
+      r += healed * 0.08;
       r -= damageTaken * 0.05;
       if (!e.alive) r -= 5;
       break;
     }
     case 'werewolf': {
-      // Boss: rewarded heavily for damage, lightly penalised for taking
-      // damage so it learns to keep pressure on weakened prey.
       r += damageDealt * 0.15 + killBonus * 1.5;
       r -= damageTaken * 0.03;
       if (!e.alive) r -= 15;
@@ -133,6 +178,40 @@ function shapedReward(track: AgentTrack, env: RLEnv): number {
     }
   }
   return r;
+}
+
+/** Recompute the herd-panic signal: weighted by recency × proximity. */
+function computeHerdPanic(env: RLEnv, e: Entity): number {
+  let sum = 0;
+  const r = env.config.visionRadius;
+  for (const o of env.entities) {
+    if (!o.alive || o.id === e.id || o.team !== e.team) continue;
+    const sinceHit = (env.tick - o.lastHitTick) * env.config.dt;
+    if (sinceHit > 2.0) continue;
+    const recency = 1 - sinceHit / 2.0;
+    const d = Math.hypot(o.x - e.x, o.z - e.z);
+    if (d > r) continue;
+    sum += recency * (1 - d / r);
+  }
+  return Math.min(1, sum);
+}
+
+/** rl2 §1A: shared team credit — after per-step rewards are computed, blend
+ *  each grazer's reward with the herd average so individual survival is
+ *  coupled to herd survival. Drives defensive swarming. */
+function applyTeamCredit(tracks: AgentTrack[]): void {
+  for (const archetype of ['cow'] as const) {
+    const herd = tracks.filter(t => t.entity.archetype === archetype && t.steps.length > 0);
+    if (herd.length < 2) continue;
+    // Compute average of each cow's most recent step reward.
+    let sum = 0;
+    for (const t of herd) sum += t.steps[t.steps.length - 1].reward;
+    const avg = sum / herd.length;
+    for (const t of herd) {
+      const last = t.steps[t.steps.length - 1];
+      last.reward = 0.5 * last.reward + 0.5 * avg;
+    }
+  }
 }
 
 function randomPersonality(): Float32Array {
@@ -214,6 +293,7 @@ export function runEpisode(
         tr.steps[tr.steps.length - 1].reward += shapedReward(tr, env);
       }
     }
+    if (env.isDecisionTick()) applyTeamCredit(tracks);
 
     env.events.length = 0;
     for (const e of env.entities) {
