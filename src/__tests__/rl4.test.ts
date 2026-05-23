@@ -3,7 +3,7 @@ import {
   Action, ACTION_COUNT, STATE_DIM_RL4, MAX_ENTITIES_RL4,
   type Archetype,
 } from '../rl/types';
-import { Policy4, reinforceUpdate4, type Step4 } from '../rl/policy4';
+import { Policy4, deserializePolicy4, reinforceUpdate4, serializePolicy4, type Step4 } from '../rl/policy4';
 import { createEnv4, spawn4, observe4, act4, step4, computeReward4 } from '../rl/env4';
 
 describe('RL4 Direct Control', () => {
@@ -27,6 +27,16 @@ describe('RL4 Direct Control', () => {
     const sum = Array.from(probs).reduce((a, b) => a + b, 0);
     expect(sum).toBeCloseTo(1, 5);
     for (const x of probs) expect(x).toBeGreaterThanOrEqual(0);
+  });
+
+  it('serializes as policy version 2 and rejects older policies', () => {
+    const p = new Policy4();
+    const json = serializePolicy4(p);
+    const parsed = JSON.parse(json);
+    expect(parsed.cfg.version).toBe(2);
+    expect(deserializePolicy4(json).cfg.version).toBe(2);
+    parsed.cfg.version = undefined;
+    expect(() => deserializePolicy4(JSON.stringify(parsed))).toThrow(/unsupported Policy4 version/);
   });
 
   it('REINFORCE learns to prefer rewarded actions', () => {

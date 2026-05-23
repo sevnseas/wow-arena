@@ -9,13 +9,17 @@ import { ACTION_COUNT, STATE_DIM_RL4 } from './types';
 import type { Rng } from './rng';
 
 export interface PolicyConfig4 {
+  version: number;
   hidden: number;
   lr: number;
   baselineEMA: number;
   entropyCoef: number;
 }
 
+export const POLICY4_VERSION = 2;
+
 export const DEFAULT_POLICY_CONFIG4: PolicyConfig4 = {
+  version: POLICY4_VERSION,
   hidden: 64,
   lr: 0.01,
   baselineEMA: 0.95,
@@ -216,7 +220,16 @@ export function serializePolicy4(p: Policy4): string {
 
 export function deserializePolicy4(json: string): Policy4 {
   const obj = JSON.parse(json);
+  if (obj?.cfg?.version !== POLICY4_VERSION) {
+    throw new Error(`unsupported Policy4 version ${obj?.cfg?.version ?? 'missing'}; expected ${POLICY4_VERSION}`);
+  }
   const p = new Policy4(obj.cfg);
+  const expectedW1 = STATE_DIM_RL4 * p.cfg.hidden;
+  const expectedW2 = ACTION_COUNT * p.cfg.hidden;
+  if (obj.W1?.length !== expectedW1 || obj.b1?.length !== p.cfg.hidden ||
+      obj.W2?.length !== expectedW2 || obj.b2?.length !== ACTION_COUNT) {
+    throw new Error(`Policy4 shape mismatch for version ${POLICY4_VERSION}`);
+  }
   p.W1 = new Float32Array(obj.W1); p.b1 = new Float32Array(obj.b1);
   p.W2 = new Float32Array(obj.W2); p.b2 = new Float32Array(obj.b2);
   p.baseline = obj.baseline ?? 0;
