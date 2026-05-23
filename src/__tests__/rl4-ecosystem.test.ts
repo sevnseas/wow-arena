@@ -212,7 +212,7 @@ describe('env4 ecosystem: reward shaping', () => {
   it('wolf mode rewards reproduction', () => {
     const env = createEnv4({ bounds: 5 });
     const a = wolf(env, 0, 0);
-    const b = wolf(env, 0.6, 0);
+    wolf(env, 0.6, 0);
     a.preyEaten = 1;
     (a as any).lastHp = a.hp; (a as any).rewardThisEpisode = 0;
     act4(env, a, Action.Interact, 0.1);

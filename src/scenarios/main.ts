@@ -16,6 +16,11 @@ import {
   loadPolicy4Registry, PolicyDriver4, ACTION_NAMES, actionToUnitVec, isMovementAction,
   type PolicyAgent4Ref,
 } from '../rl/runtime4';
+import {
+  createEnv4, spawn4, spawnGrass, observe4, act4, step4, clearEcosystemEvents,
+  type RLEnv4,
+} from '../rl/env4';
+import type { Policy4 } from '../rl/policy4';
 import type { PreyProvider } from '../prey';
 
 // ---- DOM ----
@@ -147,6 +152,14 @@ interface ScenarioDef {
   };
 }
 
+const PHYS = {
+  rabbit: { size: 0.28, speed: 2.6, attackCooldown: 1.0, hp: 30 },
+  wolf:   { size: 0.50, speed: 4.0, attackCooldown: 0.4, hp: 60 },
+};
+
+type EcosystemWorld = ReturnType<typeof createEcosystemWorld>;
+let ecosystemPolicies: Partial<Record<'rabbit' | 'wolf', Policy4>> = {};
+
 function rl3ToObs4(a: any): PolicyAgent4Ref {
   return {
     id: a.id, team: a.team, archetype: a.archetype, size: a.size,
@@ -216,6 +229,14 @@ const SCENARIOS: Record<string, ScenarioDef> = {
       };
     },
   },
+  'ecosystem': {
+    name: 'ecosystem · rabbits + wolves',
+    half: 18,
+    spawn(half) {
+      const eco = createEcosystemWorld(half);
+      return eco as any;
+    },
+  },
   'pack-vs-cow': {
     name: '2 wolves vs cow · pen 8m',
     half: 8,
@@ -254,6 +275,149 @@ const SCENARIOS: Record<string, ScenarioDef> = {
   },
 };
 
+function createEcosystemWorld(half: number) {
+  const env = createEnv4({ bounds: half, visionRadius: 25 }, 31);
+  const group = new THREE.Group();
+  group.name = 'EcosystemScenario';
+  scene.add(group);
+
+  const grassMeshes = new Map<number, THREE.Mesh>();
+  const entityMeshes = new Map<number, THREE.Mesh>();
+  const metrics = {
+    births: { rabbit: 0, wolf: 0 },
+    deaths: { rabbit: 0, wolf: 0 },
+    history: [] as Array<{ t: number; rabbits: number; wolves: number }>,
+    lastSample: -1,
+    extinctionAt: null as number | null,
+    elapsed: 0,
+  };
+
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * Math.PI * 2;
+    const r = i % 3 === 0 ? 4 : i % 3 === 1 ? 9 : 14;
+    const g = spawnGrass(env, Math.cos(a) * r, Math.sin(a) * r);
+    const mesh = new THREE.Mesh(
+      new THREE.CircleGeometry(0.6, 24),
+      new THREE.MeshBasicMaterial({ color: 0x54d66a, transparent: true, opacity: 0.75 }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(g.x, 0.025, g.z);
+    group.add(mesh);
+    grassMeshes.set(g.id, mesh);
+  }
+
+  for (let i = 0; i < 6; i++) {
+    const a = i / 6 * Math.PI * 2;
+    spawnEcosystemEntity(env, 'rabbit', Math.cos(a) * 6, Math.sin(a) * 6);
+  }
+  spawnEcosystemEntity(env, 'wolf', -8, -8);
+  spawnEcosystemEntity(env, 'wolf', 8, 8);
+
+  function ensureMesh(e: any): THREE.Mesh {
+    let mesh = entityMeshes.get(e.id);
+    if (mesh) return mesh;
+    const isWolf = e.archetype === 'wolf';
+    mesh = new THREE.Mesh(
+      isWolf ? new THREE.ConeGeometry(0.45, 1.0, 16) : new THREE.SphereGeometry(0.28, 16, 10),
+      new THREE.MeshStandardMaterial({ color: isWolf ? 0xd76666 : 0xf2d7e5, roughness: 0.65 }),
+    );
+    mesh.castShadow = true;
+    group.add(mesh);
+    entityMeshes.set(e.id, mesh);
+    return mesh;
+  }
+
+  function syncMeshes(): void {
+    for (const g of env.grass) {
+      const mesh = grassMeshes.get(g.id);
+      if (!mesh) continue;
+      mesh.scale.setScalar(0.35 + g.nutrition * 0.65);
+      (mesh.material as THREE.MeshBasicMaterial).opacity = 0.18 + g.nutrition * 0.62;
+    }
+    for (const e of env.entities) {
+      const mesh = ensureMesh(e);
+      mesh.visible = e.alive;
+      mesh.position.set(e.x, e.archetype === 'wolf' ? 0.5 : 0.28, e.z);
+      if (Math.abs(e.vx) + Math.abs(e.vz) > 0.01) mesh.rotation.y = Math.atan2(e.vx, e.vz);
+    }
+  }
+
+  const heroRef: PolicyAgent4Ref = {
+    id: 'ecosystem',
+    team: 'predator',
+    archetype: 'wolf',
+    size: PHYS.wolf.size,
+    get alive() { return env.entities.some(e => e.alive && e.archetype === 'wolf'); },
+    get hp() { return env.entities.find(e => e.alive && e.archetype === 'wolf')?.hp ?? 0; },
+    get maxHp() { return PHYS.wolf.hp; },
+    get pos() {
+      const e = env.entities.find(x => x.alive && x.archetype === 'wolf') ?? env.entities[0];
+      return { x: e?.x ?? 0, z: e?.z ?? 0 };
+    },
+    applyAction: () => {},
+  };
+
+  function tick(dt: number): void {
+    metrics.elapsed += dt;
+    for (const e of env.entities) {
+      if (!e.alive) continue;
+      const policy = ecosystemPolicies[e.archetype as 'rabbit' | 'wolf'];
+      if (!policy) continue;
+      const due = (e as any).nextDecisionAt ?? 0;
+      if (metrics.elapsed < due) continue;
+      const { probs } = policy.forward(observe4(env, e), 1.0);
+      let r = Math.random(), action = 0;
+      for (let k = 0; k < probs.length; k++) { r -= probs[k]; if (r < 0) { action = k; break; } }
+      act4(env, e, action, dt);
+      (e as any).nextDecisionAt = metrics.elapsed + 0.3;
+    }
+    step4(env, dt);
+    for (const ev of env.events) {
+      if (ev.type === 'born') metrics.births[ev.archetype as 'rabbit' | 'wolf']++;
+      if (ev.type === 'died') {
+        const dead = env.entities.find(e => e.id === ev.entityId);
+        if (dead?.archetype === 'rabbit' || dead?.archetype === 'wolf') metrics.deaths[dead.archetype]++;
+      }
+    }
+    clearEcosystemEvents(env);
+    const sec = Math.floor(metrics.elapsed);
+    if (sec !== metrics.lastSample) {
+      metrics.lastSample = sec;
+      const rabbits = env.entities.filter(e => e.alive && e.archetype === 'rabbit').length;
+      const wolves = env.entities.filter(e => e.alive && e.archetype === 'wolf').length;
+      metrics.history.push({ t: sec, rabbits, wolves });
+      while (metrics.history.length > 120) metrics.history.shift();
+      if (metrics.extinctionAt === null && (rabbits === 0 || wolves === 0)) metrics.extinctionAt = sec;
+    }
+    syncMeshes();
+  }
+
+  syncMeshes();
+  return {
+    kind: 'ecosystem' as const,
+    env,
+    metrics,
+    providers: [] as PreyProvider[],
+    brainAgents: [] as PolicyAgent4Ref[],
+    observables: [] as PolicyAgent4Ref[],
+    hero: heroRef,
+    tick,
+  };
+}
+
+function spawnEcosystemEntity(env: RLEnv4, archetype: 'rabbit' | 'wolf', x: number, z: number) {
+  const p = PHYS[archetype];
+  return spawn4(env, {
+    archetype,
+    team: archetype === 'wolf' ? 'predator' : 'prey',
+    x, z,
+    hp: p.hp, maxHp: p.hp, size: p.size, speed: p.speed,
+    attackCooldown: p.attackCooldown,
+    maxAge: archetype === 'wolf' ? 120 : 60,
+    starveRate: archetype === 'wolf' ? 0.5 : 1.0,
+  });
+}
+
 const scen = SCENARIOS[scenarioName] ?? SCENARIOS['wolf-vs-rabbit'];
 scene.add(buildPen(scen.half));
 const world = scen.spawn(scen.half);
@@ -274,7 +438,7 @@ interface PolicyMeta {
   bestEpisodeMA50: number;
   bestStage: string;
   bestEpisodeIndex: number;
-  killRatesByStage: Record<string, number>;
+  killRatesByStage?: Record<string, number>;
   policyConfig: { hidden: number; lr: number; baselineEMA: number; entropyCoef: number };
   historyLength: number;
 }
@@ -289,6 +453,10 @@ const policyRoot = `${baseUrl.replace(/\/$/, '')}/policies-rl4`;
   }
   driver = new PolicyDriver4(reg, { decisionInterval: 0.3 });
   driver.setAgents([...world.brainAgents, ...world.observables]);
+  ecosystemPolicies = {
+    rabbit: reg.get('rabbit') ?? undefined,
+    wolf: reg.get('wolf') ?? undefined,
+  };
   const archs = Object.keys(reg.policies);
   logLine(`loaded RL4 policies for ${archs.join(', ')} · driver active`);
   // Sidecar metadata — non-fatal if absent (older policies don't have it).
@@ -371,6 +539,10 @@ window.addEventListener('keydown', (e) => {
 
 // ---- HUD ----
 function updateHud(): void {
+  if ((world as any).kind === 'ecosystem') {
+    updateEcosystemHud(world as any as EcosystemWorld);
+    return;
+  }
   const hero = world.hero;
   const dec = driver?.getDecision(hero.id);
   const target = world.observables[0];
@@ -394,10 +566,10 @@ function updateHud(): void {
     provenance = `<span style="color:#fc6">trained (no meta.json — pre-curriculum run)</span>`;
   } else {
     const age = humanAge(meta.trainedAt);
-    provenance = `<span style="color:#9f9">trained ${age} · ${meta.episodesPerStage} eps × ${Object.keys(meta.killRatesByStage).length} stages</span>`;
+    provenance = `<span style="color:#9f9">trained ${age} · ${meta.episodesPerStage} eps × ${Object.keys(meta.killRatesByStage ?? {}).length || 'ecosystem'} stages</span>`;
   }
   const krRows = meta
-    ? Object.entries(meta.killRatesByStage).map(([k, v]) => {
+    ? Object.entries(meta.killRatesByStage ?? {}).map(([k, v]) => {
         const cur = (scen.half === 3 && k === 'pen3') || (scen.half === 6 && k === 'pen6')
                  || (scen.half === 8 && k === 'pen6') || (scen.half === 12 && k === 'pen12');
         const w = Math.round((v as number) * 14);
@@ -421,6 +593,55 @@ function updateHud(): void {
     <div class="row"><span class="lbl">sim×</span><span class="val">${simSpeed.toFixed(2)}</span></div>
     <div class="row"><span class="lbl">kills</span><span class="val">${kills}</span></div>
   `;
+}
+
+function updateEcosystemHud(eco: EcosystemWorld): void {
+  const alive = eco.env.entities.filter(e => e.alive);
+  const rabbits = alive.filter(e => e.archetype === 'rabbit');
+  const wolves = alive.filter(e => e.archetype === 'wolf');
+  const grassCoverage = eco.env.grass.length
+    ? eco.env.grass.reduce((s, g) => s + g.nutrition, 0) / eco.env.grass.length
+    : 0;
+  const avgAge = (xs: typeof alive) => xs.length ? xs.reduce((s, e) => s + e.age, 0) / xs.length : 0;
+  const last = eco.metrics.history[eco.metrics.history.length - 1];
+  const prev = eco.metrics.history[Math.max(0, eco.metrics.history.length - 31)];
+  const rate = last && prev && last.t !== prev.t
+    ? ((last.rabbits + last.wolves) - (prev.rabbits + prev.wolves)) / (last.t - prev.t)
+    : 0;
+  const extinctionEstimate = eco.metrics.extinctionAt !== null
+    ? `extinct at ${eco.metrics.extinctionAt}s`
+    : rate < -0.01 ? `${Math.max(0, Math.round((rabbits.length + wolves.length) / -rate))}s` : 'stable';
+  const rabbitPolicy = ecosystemPolicies.rabbit ? '#9f9' : '#f88';
+  const wolfPolicy = ecosystemPolicies.wolf ? '#9f9' : '#f88';
+
+  hud.innerHTML = `
+    <h1>${scen.name}</h1>
+    <div class="row"><span class="lbl">policy</span><span class="val"><span style="color:${rabbitPolicy}">rabbit</span> · <span style="color:${wolfPolicy}">wolf</span></span></div>
+    <hr style="border:0;border-top:1px solid #333;margin:6px 0">
+    <div class="row"><span class="lbl">pop</span><span class="val">rabbits ${rabbits.length} · wolves ${wolves.length}</span></div>
+    <div class="row"><span class="lbl">births</span><span class="val">R ${eco.metrics.births.rabbit} · W ${eco.metrics.births.wolf}</span></div>
+    <div class="row"><span class="lbl">deaths</span><span class="val">R ${eco.metrics.deaths.rabbit} · W ${eco.metrics.deaths.wolf}</span></div>
+    <div class="row"><span class="lbl">avg age</span><span class="val">R ${avgAge(rabbits).toFixed(1)}s · W ${avgAge(wolves).toFixed(1)}s</span></div>
+    <div class="row"><span class="lbl">grass</span><span class="val">${(grassCoverage * 100).toFixed(0)}%</span></div>
+    <div class="row"><span class="lbl">extinct</span><span class="val">${extinctionEstimate}</span></div>
+    <div class="row"><span class="lbl">sim×</span><span class="val">${simSpeed.toFixed(2)}</span></div>
+    <div style="margin-top:8px;font-family:monospace;line-height:1">${populationChart(eco.metrics.history)}</div>
+  `;
+}
+
+function populationChart(history: Array<{ rabbits: number; wolves: number }>): string {
+  if (history.length === 0) return '';
+  const width = 42, height = 8;
+  const maxPop = Math.max(1, ...history.map(p => Math.max(p.rabbits, p.wolves)));
+  const rows = Array.from({ length: height }, () => Array(width).fill('&nbsp;'));
+  for (let i = 0; i < history.length; i++) {
+    const x = Math.floor(i / Math.max(1, history.length - 1) * (width - 1));
+    const ry = height - 1 - Math.round(history[i].rabbits / maxPop * (height - 1));
+    const wy = height - 1 - Math.round(history[i].wolves / maxPop * (height - 1));
+    rows[ry][x] = '<span style="color:#f2d7e5">r</span>';
+    rows[wy][x] = rows[wy][x] === '&nbsp;' ? '<span style="color:#d76666">w</span>' : '<span style="color:#fff">*</span>';
+  }
+  return rows.map(r => r.join('')).join('<br>');
 }
 
 /** Minimap canvas — draws the exact observation vector the policy receives.
@@ -534,7 +755,7 @@ function updateMinimap(): void {
     miniCtx.lineWidth = 1;
   }
 
-  miniLegend.textContent = `${nVisible} entity slot${nVisible === 1 ? '' : 's'} active · 140-dim obs`;
+  miniLegend.textContent = `${nVisible} entity slot${nVisible === 1 ? '' : 's'} active · 145-dim obs`;
 }
 
 function humanAge(iso: string): string {

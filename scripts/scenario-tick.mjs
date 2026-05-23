@@ -6,7 +6,7 @@
  * policy's behavior is checkable without a browser.
  *
  * Run:  npm run scenario [name] [seconds]
- *   name    = wolf-vs-rabbit | pack-vs-cow | cat-vs-rabbit  (default wolf-vs-rabbit)
+ *   name    = wolf-vs-rabbit | pack-vs-cow | cat-vs-rabbit | ecosystem  (default wolf-vs-rabbit)
  *   seconds = simulated seconds                              (default 30)
  */
 import { readFileSync } from 'node:fs';
@@ -35,11 +35,19 @@ const {
   ACTION_NAMES,
 } = await import('../src/rl/runtime4.ts');
 const { deserializePolicy4 } = await import('../src/rl/policy4.ts');
+const {
+  createEnv4, spawn4, spawnGrass, observe4, act4, step4, clearEcosystemEvents,
+} = await import('../src/rl/env4.ts');
 
 const scenarioName = process.argv[2] ?? 'wolf-vs-rabbit';
 const totalSec = Number(process.argv[3] ?? 30);
 
 const scene = new THREE.Scene();
+
+const PHYS = {
+  rabbit: { size: 0.28, speed: 2.6, attackCooldown: 1.0, hp: 30 },
+  wolf:   { size: 0.50, speed: 4.0, attackCooldown: 0.4, hp: 60 },
+};
 
 function rl3ToObs4(a) {
   return {
@@ -53,6 +61,7 @@ function rl3ToObs4(a) {
 }
 
 function spawnScenario(name) {
+  if (name === 'ecosystem') return spawnEcosystemScenario();
   // Pen variants verify the policy in the distribution it was actually trained
   // on. Curriculum stages: pen3 / pen6 / pen12 / open(25). Without matching
   // the training distribution, low kill-rates can be misread as "policy
@@ -100,14 +109,48 @@ function spawnScenario(name) {
   throw new Error(`unknown scenario: ${name}`);
 }
 
+function spawnEcosystemScenario(seed = 31) {
+  const env = createEnv4({ bounds: 18, visionRadius: 25 }, seed);
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * Math.PI * 2;
+    const r = i % 3 === 0 ? 4 : i % 3 === 1 ? 9 : 14;
+    spawnGrass(env, Math.cos(a) * r, Math.sin(a) * r);
+  }
+  for (let i = 0; i < 6; i++) {
+    const a = i / 6 * Math.PI * 2;
+    spawnEcosystemEntity(env, 'rabbit', Math.cos(a) * 6, Math.sin(a) * 6);
+  }
+  spawnEcosystemEntity(env, 'wolf', -8, -8);
+  spawnEcosystemEntity(env, 'wolf', 8, 8);
+  return { kind: 'ecosystem', env };
+}
+
+function spawnEcosystemEntity(env, archetype, x, z) {
+  const p = PHYS[archetype];
+  return spawn4(env, {
+    archetype,
+    team: archetype === 'wolf' ? 'predator' : 'prey',
+    x, z,
+    hp: p.hp, maxHp: p.hp, size: p.size, speed: p.speed,
+    attackCooldown: p.attackCooldown,
+    maxAge: archetype === 'wolf' ? 120 : 60,
+    starveRate: archetype === 'wolf' ? 0.5 : 1.0,
+  });
+}
+
 const world = spawnScenario(scenarioName);
 
 const reg = new Policy4Registry();
-for (const a of ['wolf', 'cat', 'werewolf']) {
+for (const a of ['wolf', 'cat', 'werewolf', 'rabbit']) {
   try {
     const json = readFileSync(resolve(root, 'public', 'policies-rl4', `${a}.json`), 'utf8');
     reg.policies[a] = deserializePolicy4(json);
   } catch {}
+}
+
+if (world.kind === 'ecosystem') {
+  runEcosystem(world.env, reg, totalSec);
+  process.exit(0);
 }
 
 const driver = new PolicyDriver4(reg, { decisionInterval: 0.3, seed: 1 });
@@ -123,7 +166,7 @@ console.log(`Initial distance: ${Math.hypot(hero.pos.x - target.pos.x, hero.pos.
 
 const dt = 1 / 60;
 const totalTicks = Math.floor(totalSec / dt);
-const actionHist = new Array(11).fill(0);
+const actionHist = new Array(ACTION_NAMES.length).fill(0);
 let lastLogSec = -1;
 let firstContactAt = -1;
 
@@ -171,4 +214,93 @@ for (let i = 0; i < actionHist.length; i++) {
     const bar = '█'.repeat(Math.round(actionHist[i] / 5));
     console.log(`  ${ACTION_NAMES[i].padEnd(10)} ${actionHist[i].toString().padStart(4)}  ${bar}`);
   }
+}
+
+function runEcosystem(env, reg, seconds) {
+  const dt = 1 / 60;
+  const totalTicks = Math.floor(seconds / dt);
+  const decisionEvery = 0.3;
+  const nextDecision = new Map();
+  let births = 0, deaths = 0;
+  let rabbitBirths = 0, wolfBirths = 0;
+  const deathCauses = { predator: 0, starvation: 0, age: 0 };
+  const rows = ['t,n_rabbits,n_wolves,n_grass_patches,n_births_total,n_deaths_total'];
+  const timeline = [];
+
+  console.log(`\n=== Scenario: ecosystem ===`);
+  console.log(rows[0]);
+  for (let tick = 0; tick < totalTicks; tick++) {
+    const elapsed = tick * dt;
+    for (const e of env.entities) {
+      if (!e.alive) continue;
+      const policy = reg.get(e.archetype);
+      if (!policy) continue;
+      const due = nextDecision.get(e.id) ?? 0;
+      if (elapsed < due) continue;
+      const { probs } = policy.forward(observe4(env, e), 1.0);
+      let r = Math.random(), action = 0;
+      for (let k = 0; k < probs.length; k++) { r -= probs[k]; if (r < 0) { action = k; break; } }
+      act4(env, e, action, dt);
+      nextDecision.set(e.id, elapsed + decisionEvery);
+    }
+    step4(env, dt);
+    for (const ev of env.events) {
+      if (ev.type === 'born') {
+        births++;
+        if (ev.archetype === 'rabbit') rabbitBirths++;
+        if (ev.archetype === 'wolf') wolfBirths++;
+      } else if (ev.type === 'died') {
+        deaths++;
+        deathCauses[ev.cause]++;
+      }
+    }
+    clearEcosystemEvents(env);
+
+    if (tick % 60 === 0) {
+      const alive = env.entities.filter(e => e.alive);
+      const nRabbits = alive.filter(e => e.archetype === 'rabbit').length;
+      const nWolves = alive.filter(e => e.archetype === 'wolf').length;
+      const nGrass = env.grass.filter(g => g.nutrition > 0.2).length;
+      const t = Math.floor(elapsed);
+      const row = `${t},${nRabbits},${nWolves},${nGrass},${births},${deaths}`;
+      rows.push(row);
+      timeline.push({ t, nRabbits, nWolves });
+      console.log(row);
+    }
+  }
+
+  const final = timeline[timeline.length - 1] ?? { nRabbits: 0, nWolves: 0 };
+  const extinction = timeline.find(p => p.nRabbits === 0 || p.nWolves === 0)?.t ?? null;
+  const cycle = detectCycle(timeline);
+  console.log('\n--- ecosystem summary ---');
+  console.log(`Total simulated: ${seconds}s`);
+  console.log(`Final population: rabbits=${final.nRabbits} wolves=${final.nWolves}`);
+  console.log(`Births: rabbits=${rabbitBirths} wolves=${wolfBirths} total=${births}`);
+  console.log(`Deaths: total=${deaths} predator=${deathCauses.predator} starvation=${deathCauses.starvation} age=${deathCauses.age}`);
+  console.log(`Extinction time: ${extinction === null ? 'none' : extinction + 's'}`);
+  console.log(`Oscillation period: ${cycle.period === null ? 'none detected' : cycle.period + 's'}`);
+  console.log('\nLotka-Volterra phase plot (rabbit x, wolf y):');
+  console.log(phasePlot(timeline));
+}
+
+function detectCycle(points) {
+  const peaks = [];
+  for (let i = 1; i < points.length - 1; i++) {
+    if (points[i].nRabbits > points[i - 1].nRabbits && points[i].nRabbits >= points[i + 1].nRabbits) peaks.push(points[i].t);
+  }
+  return { period: peaks.length >= 2 ? peaks[1] - peaks[0] : null };
+}
+
+function phasePlot(points) {
+  if (!points.length) return '(no data)';
+  const w = 48, h = 14;
+  const maxR = Math.max(1, ...points.map(p => p.nRabbits));
+  const maxW = Math.max(1, ...points.map(p => p.nWolves));
+  const grid = Array.from({ length: h }, () => Array(w).fill(' '));
+  for (const p of points) {
+    const x = Math.min(w - 1, Math.round((p.nRabbits / maxR) * (w - 1)));
+    const y = h - 1 - Math.min(h - 1, Math.round((p.nWolves / maxW) * (h - 1)));
+    grid[y][x] = '*';
+  }
+  return grid.map(r => `|${r.join('')}|`).join('\n') + `\n rabbits 0..${maxR}, wolves 0..${maxW}`;
 }
