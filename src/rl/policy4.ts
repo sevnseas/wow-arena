@@ -120,35 +120,29 @@ export function reinforceUpdate4(policy: Policy4, traj: Step4[], gamma = 0.97): 
       dlogits[k] = g / Math.max(0.05, step.temperature);
     }
 
+    const dHidden = new Float32Array(h);
     for (let k = 0; k < ACTION_COUNT; k++) {
-      const d = dlogits[k];
-      gb2[k] += d;
+      gb2[k] += dlogits[k];
       for (let j = 0; j < h; j++) {
-        const dh = d * step.hidden[j];
-        gW2[k * h + j] += dh;
+        gW2[k * h + j] += dlogits[k] * step.hidden[j];
+        dHidden[j] += dlogits[k] * policy.W2[k * h + j];
       }
     }
 
-    const dh = new Float32Array(h);
+    for (let j = 0; j < h; j++) dHidden[j] *= (1 - step.hidden[j] * step.hidden[j]);
     for (let j = 0; j < h; j++) {
-      let s = 0;
-      for (let k = 0; k < ACTION_COUNT; k++) s += dlogits[k] * step.hidden[j] * step.probs[k];
-      dh[j] = s * (1 - step.hidden[j] * step.hidden[j]);
-    }
-
-    for (let j = 0; j < h; j++) {
-      gb1[j] += dh[j];
+      gb1[j] += dHidden[j];
       for (let i = 0; i < STATE_DIM_RL4; i++) {
-        gW1[j * STATE_DIM_RL4 + i] += dh[j] * step.state[i];
+        gW1[j * STATE_DIM_RL4 + i] += dHidden[j] * step.state[i];
       }
     }
   }
 
-  for (let i = 0; i < policy.W1.length; i++) policy.W1[i] += lr * gW1[i] / traj.length;
-  for (let i = 0; i < policy.b1.length; i++) policy.b1[i] += lr * gb1[i] / traj.length;
-  for (let i = 0; i < policy.W2.length; i++) policy.W2[i] += lr * gW2[i] / traj.length;
-  for (let i = 0; i < policy.b2.length; i++) policy.b2[i] += lr * gb2[i] / traj.length;
+  const invN = 1 / traj.length;
+  for (let i = 0; i < policy.W1.length; i++) policy.W1[i] -= lr * gW1[i] * invN;
+  for (let i = 0; i < policy.b1.length; i++) policy.b1[i] -= lr * gb1[i] * invN;
+  for (let i = 0; i < policy.W2.length; i++) policy.W2[i] -= lr * gW2[i] * invN;
+  for (let i = 0; i < policy.b2.length; i++) policy.b2[i] -= lr * gb2[i] * invN;
 
-  mean = 0; for (let t = 0; t < G.length; t++) mean += G[t]; mean /= G.length;
   return mean;
 }

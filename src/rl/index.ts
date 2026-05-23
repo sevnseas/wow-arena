@@ -7,3 +7,6 @@ export * from './train';
 export * from './validate';
 export * from './runtime';
 export * from './registry';
+export * from './policy4';
+export * from './env4';
+export * from './train4';
