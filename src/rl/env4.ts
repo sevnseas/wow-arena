@@ -21,6 +21,8 @@ export interface Grass {
   z: number;
   /** 0..1 — fraction of full nutrition currently available. */
   nutrition: number;
+  /** Seconds since the patch was last fully depleted. Zero while full. */
+  regrowTimer: number;
 }
 
 /** Ecosystem events surfaced for metrics + reward shaping. Stored alongside
@@ -100,7 +102,7 @@ export function createEnv4(config: Partial<EnvConfig> = {}, seed = 1): RLEnv4 {
 
 /** Add a grass patch at (x, z) with full nutrition. */
 export function spawnGrass(env4: RLEnv4, x: number, z: number): Grass {
-  const g: Grass = { id: env4.nextGrassId++, x, z, nutrition: 1 };
+  const g: Grass = { id: env4.nextGrassId++, x, z, nutrition: 1, regrowTimer: 0 };
   env4.grass.push(g);
   return g;
 }
@@ -311,7 +313,11 @@ export function step4(env4: RLEnv4, dt: number): void {
   // Grass regrowth + grazing pass.
   const { grassRadius, grassRegrow, grazeRate } = env4.config;
   for (const g of env4.grass) {
-    if (g.nutrition < 1) g.nutrition = Math.min(1, g.nutrition + grassRegrow * dt);
+    if (g.nutrition < 1) {
+      g.regrowTimer += dt;
+      g.nutrition = Math.min(1, g.nutrition + grassRegrow * dt);
+      if (g.nutrition >= 1) g.regrowTimer = 0;
+    }
   }
   for (const e of env4.entities) {
     if (!e.alive || e.archetype !== 'rabbit') continue;
@@ -321,6 +327,10 @@ export function step4(env4: RLEnv4, dt: number): void {
       if (dx * dx + dz * dz > grassRadius * grassRadius) continue;
       const take = Math.min(g.nutrition, grazeRate * dt);
       g.nutrition -= take;
+      if (g.nutrition <= 0) {
+        g.nutrition = 0;
+        g.regrowTimer = 0;
+      }
       e.grassEaten += take;
       e.hp = Math.min(e.maxHp, e.hp + take * 8); // grazing also heals
       env4.events.push({ type: 'grazed', entityId: e.id, amount: take });
@@ -420,6 +430,8 @@ function rewardRabbit(env4: RLEnv4, e: RewardCarry): number {
   const bornEv = env4.events.filter(ev => ev.type === 'born' &&
     ((ev as any).parentAId === e.id || (ev as any).parentBId === e.id));
   r += bornEv.length * 10;
+  const diedEv = env4.events.filter(ev => ev.type === 'died' && (ev as any).entityId === e.id);
+  r -= diedEv.length * 2;
   r += 0.02; // alive-this-tick bonus — strong incentive to dodge predators
   const dmgTaken = Math.max(0, e.lastHp - e.hp);
   r -= dmgTaken * 0.2;

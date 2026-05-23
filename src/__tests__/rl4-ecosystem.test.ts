@@ -39,13 +39,17 @@ describe('env4 ecosystem: grass + grazing', () => {
     const env = createEnv4({ bounds: 5 });
     const r = rabbit(env, 0, 0);
     const g = spawnGrass(env, 0, 0);
+    expect(g.regrowTimer).toBe(0);
     r.hp = 10;
     // Eat all of it.
     for (let i = 0; i < 100; i++) step4(env, 0.1);
     expect(g.nutrition).toBeLessThan(0.05);
+    expect(g.regrowTimer).toBe(0);
     // Move rabbit away so it can't keep eating.
     r.x = 10; r.z = 10;
-    for (let i = 0; i < 250; i++) step4(env, 0.1); // 25s
+    step4(env, 0.1);
+    expect(g.regrowTimer).toBeGreaterThan(0);
+    for (let i = 0; i < 249; i++) step4(env, 0.1); // 25s total
     expect(g.nutrition).toBeGreaterThan(0.5);
   });
 
@@ -207,6 +211,16 @@ describe('env4 ecosystem: reward shaping', () => {
     act4(env, a, Action.Interact, 0.1);
     const rew = computeReward4(env, a as any, 'rabbit');
     expect(rew).toBeGreaterThan(5); // +10 per birth easily dominates
+  });
+
+  it('rabbit mode penalizes death events', () => {
+    const env = createEnv4({ bounds: 5 });
+    const r = rabbit(env, 0, 0, { starveRate: 100 });
+    r.hp = 1;
+    (r as any).lastHp = r.hp; (r as any).rewardThisEpisode = 0;
+    step4(env, 0.1);
+    const rew = computeReward4(env, r as any, 'rabbit');
+    expect(rew).toBeLessThan(-2);
   });
 
   it('wolf mode rewards reproduction', () => {
