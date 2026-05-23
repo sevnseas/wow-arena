@@ -31,28 +31,122 @@ npm run dev
 
 ## RL training (predator / prey policies)
 
-The headless RL environment in `src/rl/` runs the game on pure tick time
-(no Three.js, no wall-clock waits). It implements the two-tier architecture
-from [`entity-policies.md`](./entity-policies.md):
+Two generations of policies live in this repo. They share the same headless
+environment in `src/rl/` (pure tick time, no Three.js / wall clock).
 
-- **Tier 1 — Neural brain.** A tiny shared MLP per archetype outputs logits
-  over 5 intentions (`Idle / Attack / CC / Heal / Flee`). Per-entity diversity
-  comes from `personalityBias` + softmax `temperature` — no retraining needed.
-- **Tier 2 — Algorithmic engine** (`src/rl/engine.ts`) executes the held
-  intention: steering toward focus for Attack, away for Flee, attack-timer
-  bookkeeping, damage. The brain never sees raycasts or paths.
+### RL3 — intention policy (legacy)
 
-Damage is size-proportional: `dmg = baseDamage * attacker.size`. The live
-game's wolves use the same rule (see `wolves.ts`).
+5-action high-level brain (`Idle / Attack / CC / Heal / Flee`) trained per
+archetype; an algorithmic engine in `src/rl/engine.ts` executes the chosen
+intention. Documented in [`entity-policies.md`](./entity-policies.md).
 
 ```bash
-npm run train               # 300 episodes, ~1s, writes public/policies/*.json
-npm run train -- 1000 800   # episodes / max-ticks
-npm test src/__tests__/rl.test.ts
+npm run train                       # 300 eps, writes public/policies/*.json
 ```
 
-The trainer prints the three validation checks from
-`entity-policies.md` §4 (Kiting / Target Lock / Stochastic Variance).
+### RL4 — direct-control policy (current)
+
+11-action policy (`MoveForward / MoveBack / StrafeLeft / StrafeRight` + 4
+diagonals + 3 ability slots) that drives entities directly — same action
+space the player uses for animal classes. Observation is a 20-slot ×
+7-feature "minimap" (relative position, velocity, HP, archetype, team)
+totaling 140 dims. Network: 140 → 64 hidden → 11 logits, REINFORCE with Adam.
+
+Curriculum (mixed-pen sampling, each stage widens the range of pen sizes):
+
+| stage | bounds range | episodes (default) |
+|---|---|---|
+| tight | [1.5, 1.5] m | 600 |
+| mix3 | [1.5, 3] m | 600 |
+| mix6 | [1.5, 6] m | 800 |
+| mix12 | [1.5, 12] m | 1000 |
+| open | [1.5, 25] m | 1500 |
+
+The best snapshot is taken only during the final stage (so a pen1.5 overfit
+can't be chosen). Per-archetype kill-rate after ~800 eps/stage:
+
+| archetype | tight | mix3 | mix6 | mix12 | open |
+|---|---|---|---|---|---|
+| wolf | 100% | 100% | 100% | 82% | 65% |
+| werewolf | 100% | 100% | 100% | 93% | 63% |
+| cat | 100% | 98% | 62% | 12% | 7% (small contact window — needs more) |
+
+```bash
+npm run train:rl4 wolf 1500         # 1500 eps per stage = 7500 total, writes
+                                    #   public/policies-rl4/wolf.json
+                                    #   public/policies-rl4/wolf.meta.json
+                                    #   public/policies-rl4/wolf.history.csv
+npm run train:rl4 all 1500          # train wolf, cat, werewolf
+npm run scenario wolf-vs-rabbit-pen 20   # headless verification, prints per-second
+                                          # state + final action histogram + kill summary
+```
+
+### Game integration
+
+Loaded automatically in the live game when `public/policies-rl4/*.json`
+exist. `PolicyDriver4` builds the minimap observation from live game
+entities and calls back into per-archetype adapters
+(`getPolicy4Agents()` on `WolfPack` / `CatColony` / `MutantPredator`).
+A `brainSteer` flag on each entity suppresses the auto-prey-acquisition
+state machine so the policy's chosen direction actually wins, and
+turn rate is boosted 3× under brain control so the wolf can commit to a
+direction within one 0.4s decision interval. `?policy=rl3` forces the
+legacy Intent-based driver instead.
+
+## Scenarios (RL4 verification)
+
+Isolated test arenas at `scenarios.html` show the trained policy steering
+one entity inside a visible pen matched to a curriculum stage.
+
+```
+http://localhost:3000/threejs-arena/scenarios.html?s=wolf-vs-rabbit
+http://localhost:3000/threejs-arena/scenarios.html?s=wolf-vs-rabbit-mid    # 6m pen
+http://localhost:3000/threejs-arena/scenarios.html?s=wolf-vs-rabbit-open   # 12m pen
+http://localhost:3000/threejs-arena/scenarios.html?s=cat-vs-rabbit
+http://localhost:3000/threejs-arena/scenarios.html?s=pack-vs-cow
+```
+
+Each page shows:
+- **Policy provenance HUD** — training date, episodes, hidden-layer size,
+  best episode MA50, per-stage kill-rate bar chart with the current pen
+  highlighted (so you know what % chance the kill is *expected* to have).
+- **Pen** — wireframe orange walls + 1m grid + corner posts, sized to the
+  training stage; no cave / boulders / decoration.
+- **Action arrow** — cyan arrow above the agent showing the world-space
+  direction the policy just chose; length and color scale with confidence.
+  Ability actions pulse an orange ring instead.
+- **Minimap canvas** (bottom-right) — paints the literal 140-dim observation
+  the network sees: each visible entity as a colored dot at its normalized
+  rel-pos, sized by HP, with a velocity tail. The chosen-action overlay
+  matches input ↔ output in one frame.
+
+## Tick-speed in-browser trainer
+
+```
+http://localhost:3000/threejs-arena/train.html?a=wolf
+http://localhost:3000/threejs-arena/train.html?a=cat
+http://localhost:3000/threejs-arena/train.html?a=werewolf
+```
+
+The same REINFORCE curriculum used by `npm run train:rl4`, rendered live:
+
+- Left pane — 2D top-down `env4` sim: pen, agent, prey, chosen-action arrow.
+- Right pane — return MA chart updates per batch; curriculum-stage progress
+  bars; kill-rate per completed stage; eps/sec counter; pause / 1× / 5× / 20×
+  speed; **"export policy"** button downloads the trained JSON.
+- Same `train-tick.ts` code as the headless script so what you see in the
+  browser converges to the same policy.
+
+You can watch the loss MA flatten in each stage, then drop and recover as
+the curriculum widens the pen.
+
+```bash
+npm test src/__tests__/rl4-live-control.test.ts   # verifies brainSteer
+                                                   # actually translates wolves
+npm test src/__tests__/rl.test.ts                  # legacy RL3 tests
+```
+
+Design docs: [`rl4.md`](./rl4.md), [`RL4-IMPLEMENTATION.md`](./RL4-IMPLEMENTATION.md), [`entity-policies.md`](./entity-policies.md).
 
 ## Controls
 
