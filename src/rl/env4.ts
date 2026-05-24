@@ -223,6 +223,11 @@ function tryReproduce(env4: RLEnv4, e: Entity): boolean {
       : Infinity;
   const counter = e.archetype === 'rabbit' ? e.grassEaten : e.preyEaten;
   if (counter < threshold) return false;
+  if (e.team === 'predator') {
+    const predators = env4.env.entities.filter(o => o.alive && o.archetype === e.archetype).length;
+    const prey = env4.env.entities.filter(o => o.alive && o.team !== e.team).length;
+    if (prey < predators * 4) return false;
+  }
 
   const range = env4.config.interactRange;
   let mate: Entity | null = null;
@@ -296,14 +301,16 @@ export function step4(env4: RLEnv4, dt: number): void {
       const d = Math.hypot(dx, dz);
       const contactRange = a.size + b.size + env.config.contactBuffer;
       if (d < contactRange && a.team !== b.team) {
-        if (a.attackTimer <= 0) {
-          const targetWasAlive = b.alive;
-          env.damage(a, b);
-          a.attackTimer = a.attackCooldown;
-          if (targetWasAlive && !b.alive) {
+        const attacker = a.team === 'predator' ? a : b.team === 'predator' ? b : a;
+        const victim = attacker === a ? b : a;
+        if (attacker.attackTimer <= 0) {
+          const targetWasAlive = victim.alive;
+          env.damage(attacker, victim);
+          attacker.attackTimer = attacker.attackCooldown;
+          if (targetWasAlive && !victim.alive) {
             // Predator credit + death event for ecosystem metrics.
-            a.preyEaten += 1;
-            env4.events.push({ type: 'died', entityId: b.id, cause: 'predator' });
+            attacker.preyEaten += 1;
+            env4.events.push({ type: 'died', entityId: victim.id, cause: 'predator' });
           }
         }
       }
@@ -468,8 +475,9 @@ function rewardRabbit(env4: RLEnv4, e: RewardCarry): number {
 }
 
 /** Wolf shaping: damage + kills (which auto-credit preyEaten) + each
- *  successful birth + alive bonus. Distance shaping on nearest rabbit
- *  always (predator's primary goal). */
+ *  successful birth + alive bonus. Hungry wolves shape toward prey; fed
+ *  wolves shape toward a same-species partner so Interact-reproduction
+ *  becomes learnable instead of being drowned out by hunt pressure. */
 function rewardWolf(env4: RLEnv4, e: RewardCarry): number {
   let r = 0;
   const dmgEvents = env4.env.events.filter(ev => ev.type === 'damage' && ev.attackerId === e.id);
@@ -483,17 +491,24 @@ function rewardWolf(env4: RLEnv4, e: RewardCarry): number {
   r += 0.01;
   const dmgTaken = Math.max(0, e.lastHp - e.hp);
   r -= dmgTaken * 0.15;
-  let nearestEnemyDist = Infinity;
+  const fed = e.preyEaten >= env4.config.reproThreshold.wolf;
+  let bestDist = Infinity;
   for (const o of env4.env.entities) {
-    if (!o.alive || o.id === e.id || o.team === e.team) continue;
+    if (!o.alive || o.id === e.id) continue;
+    if (fed) {
+      if (o.archetype !== e.archetype) continue;
+    } else if (o.team === e.team) {
+      continue;
+    }
     const dx = o.x - e.x, dz = o.z - e.z;
     const d = Math.hypot(dx, dz);
-    if (d < nearestEnemyDist) nearestEnemyDist = d;
+    if (d < bestDist) bestDist = d;
   }
-  if (Number.isFinite(nearestEnemyDist) && e.lastEnemyDist !== undefined) {
-    r += (e.lastEnemyDist - nearestEnemyDist) * 0.5;
+  if (Number.isFinite(bestDist) && e.lastEnemyDist !== undefined) {
+    r += (e.lastEnemyDist - bestDist) * (fed ? 0.8 : 0.5);
+    if (fed && bestDist <= env4.config.interactRange) r += 0.2;
   }
-  e.lastEnemyDist = Number.isFinite(nearestEnemyDist) ? nearestEnemyDist : undefined;
+  e.lastEnemyDist = Number.isFinite(bestDist) ? bestDist : undefined;
   e.lastHp = e.hp;
   e.rewardThisEpisode += r;
   return r;

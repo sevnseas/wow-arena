@@ -1,6 +1,6 @@
 {
-  "archetype": "wolf",
-  "trainedAt": "2026-05-24T16:12:29.328Z",
+  "archetype": "rabbit",
+  "trainedAt": "2026-05-24T16:12:29.325Z",
   "episodesPerStage": 100,
   "stages": [
     {
@@ -172,9 +172,9 @@
       }
     }
   ],
-  "bestMetricScore50": 4.685555555555574,
+  "bestMetricScore50": 120.94879841628999,
   "bestStage": "S5-eco",
-  "bestEpisodeIndex": 9,
+  "bestEpisodeIndex": 24,
   "policyConfig": {
     "version": 2,
     "hidden": 64,
@@ -182,5 +182,5 @@
     "baselineEMA": 0.95,
     "entropyCoef": 0.01
   },
-  "historyLength": 200
+  "historyLength": 500
 }

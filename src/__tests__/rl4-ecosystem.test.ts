@@ -139,6 +139,7 @@ describe('env4 ecosystem: Interact reproduction', () => {
     const env = createEnv4({ bounds: 5 });
     const a = wolf(env, 0, 0);
     const b = wolf(env, 0.6, 0);
+    for (let i = 0; i < 8; i++) rabbit(env, 2 + i * 0.1, 0);
     a.preyEaten = 1;
     b.preyEaten = 0;
     const beforeN = env.entities.length;
@@ -146,6 +147,18 @@ describe('env4 ecosystem: Interact reproduction', () => {
     expect(env.entities.length).toBe(beforeN + 1); // child spawned
     expect(a.preyEaten).toBe(0);
     expect(b.preyEaten).toBe(0);
+  });
+
+  it('wolf Interact is gated by available prey population', () => {
+    const env = createEnv4({ bounds: 5 });
+    const a = wolf(env, 0, 0);
+    wolf(env, 0.6, 0);
+    rabbit(env, 2, 0);
+    a.preyEaten = 1;
+    const beforeN = env.entities.length;
+    act4(env, a, Action.Interact, 0.1);
+    expect(env.entities.length).toBe(beforeN);
+    expect(a.preyEaten).toBe(1);
   });
 
   it('wolf preyEaten increments on kill via collision damage', () => {
@@ -159,6 +172,18 @@ describe('env4 ecosystem: Interact reproduction', () => {
     expect(w.preyEaten).toBeGreaterThanOrEqual(1);
     const dieEv = env.events.find(e => e.type === 'died' && (e as any).entityId === r.id);
     expect((dieEv as any).cause).toBe('predator');
+  });
+
+  it('predator damages prey regardless of spawn order', () => {
+    const env = createEnv4({ bounds: 5 });
+    const r = rabbit(env, 0, 0);
+    const w = wolf(env, 0.3, 0);
+    r.hp = 1;
+    clearEcosystemEvents(env);
+    step4(env, 0.1);
+    expect(r.alive).toBe(false);
+    expect(w.alive).toBe(true);
+    expect(w.preyEaten).toBe(1);
   });
 });
 
@@ -227,11 +252,25 @@ describe('env4 ecosystem: reward shaping', () => {
     const env = createEnv4({ bounds: 5 });
     const a = wolf(env, 0, 0);
     wolf(env, 0.6, 0);
+    for (let i = 0; i < 8; i++) rabbit(env, 2 + i * 0.1, 0);
     a.preyEaten = 1;
     (a as any).lastHp = a.hp; (a as any).rewardThisEpisode = 0;
     act4(env, a, Action.Interact, 0.1);
     const rew = computeReward4(env, a as any, 'wolf');
     expect(rew).toBeGreaterThan(5);
+  });
+
+  it('fed wolf mode shapes toward same-species partner', () => {
+    const env = createEnv4({ bounds: 8 });
+    const a = wolf(env, 0, 0);
+    const b = wolf(env, 3, 0);
+    rabbit(env, 1, 0);
+    a.preyEaten = 1;
+    (a as any).lastHp = a.hp; (a as any).rewardThisEpisode = 0;
+    (a as any).lastEnemyDist = 3.5;
+    b.x = 2;
+    const rew = computeReward4(env, a as any, 'wolf');
+    expect(rew).toBeGreaterThan(0.5);
   });
 });
 

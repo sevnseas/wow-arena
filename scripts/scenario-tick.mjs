@@ -113,15 +113,15 @@ function spawnScenario(name, seed = 31) {
 }
 
 function spawnEcosystemScenario(seed = 31) {
-  const half = tightEcosystemHalf(6, 2, 12);
+  const half = tightEcosystemHalf(8, 2, 12);
   const env = createEnv4({ bounds: half, visionRadius: Math.max(6, half * 1.4) }, seed);
   for (let i = 0; i < 12; i++) {
     const a = i / 12 * Math.PI * 2;
     const r = (0.25 + (i % 3) * 0.22) * half;
     spawnGrass(env, Math.cos(a) * r, Math.sin(a) * r);
   }
-  for (let i = 0; i < 6; i++) {
-    const a = i / 6 * Math.PI * 2;
+  for (let i = 0; i < 8; i++) {
+    const a = i / 8 * Math.PI * 2;
     spawnEcosystemEntity(env, 'rabbit', Math.cos(a) * half * 0.42, Math.sin(a) * half * 0.42);
   }
   spawnEcosystemEntity(env, 'wolf', -half * 0.5, -half * 0.5);
@@ -229,6 +229,8 @@ function runEcosystem(env, reg, seconds, opts = {}) {
   const nextDecision = new Map();
   let births = 0, deaths = 0;
   let rabbitBirths = 0, wolfBirths = 0;
+  let rabbitImmigrants = 0, wolfImmigrants = 0;
+  const lastImmigrationAt = { rabbit: 0, wolf: 0 };
   const deathCauses = { predator: 0, starvation: 0, age: 0 };
   const rows = ['t,n_rabbits,n_wolves,n_grass_patches,n_births_total,n_deaths_total'];
   const timeline = [];
@@ -271,15 +273,29 @@ function runEcosystem(env, reg, seconds, opts = {}) {
     clearEcosystemEvents(env);
 
     if (tick % 60 === 0) {
-      const alive = env.entities.filter(e => e.alive);
-      const nRabbits = alive.filter(e => e.archetype === 'rabbit').length;
-      const nWolves = alive.filter(e => e.archetype === 'wolf').length;
+      let alive = env.entities.filter(e => e.alive);
+      let nRabbits = alive.filter(e => e.archetype === 'rabbit').length;
+      let nWolves = alive.filter(e => e.archetype === 'wolf').length;
       const nGrass = env.grass.filter(g => g.nutrition > 0.2).length;
       const t = Math.floor(elapsed);
+      if (nWolves < 2 && nRabbits >= 4 && elapsed - lastImmigrationAt.wolf >= 18) {
+        spawnPairAtEdge(env, 'wolf', metrics.half);
+        wolfImmigrants += 2;
+        lastImmigrationAt.wolf = elapsed;
+      }
+      if (nRabbits < 6 && elapsed - lastImmigrationAt.rabbit >= 18) {
+        spawnPairAtEdge(env, 'rabbit', metrics.half);
+        spawnPairAtEdge(env, 'rabbit', metrics.half);
+        rabbitImmigrants += 4;
+        lastImmigrationAt.rabbit = elapsed;
+      }
+      alive = env.entities.filter(e => e.alive);
+      nRabbits = alive.filter(e => e.archetype === 'rabbit').length;
+      nWolves = alive.filter(e => e.archetype === 'wolf').length;
       const row = `${t},${nRabbits},${nWolves},${nGrass},${births},${deaths}`;
       rows.push(row);
       timeline.push({ t, nRabbits, nWolves });
-      maybeGrowEcosystemPen(env, metrics);
+      if (maybeGrowEcosystemPen(env, metrics)) addOuterGrass(env, metrics.half, 12);
       if (verbose) console.log(row);
     }
   }
@@ -294,6 +310,7 @@ function runEcosystem(env, reg, seconds, opts = {}) {
     seconds,
     final,
     births: { rabbit: rabbitBirths, wolf: wolfBirths, total: births },
+    immigrants: { rabbit: rabbitImmigrants, wolf: wolfImmigrants },
     deaths: { total: deaths, ...deathCauses },
     extinction,
     cycle,
@@ -308,6 +325,7 @@ function runEcosystem(env, reg, seconds, opts = {}) {
     console.log(`Total simulated: ${seconds}s`);
     console.log(`Final population: rabbits=${final.nRabbits} wolves=${final.nWolves}`);
     console.log(`Births: rabbits=${rabbitBirths} wolves=${wolfBirths} total=${births}`);
+    console.log(`Immigrants: rabbits=${rabbitImmigrants} wolves=${wolfImmigrants}`);
     console.log(`Deaths: total=${deaths} predator=${deathCauses.predator} starvation=${deathCauses.starvation} age=${deathCauses.age}`);
     console.log(`Mean lifetime: rabbits=${result.meanRabbitLifetime.toFixed(1)}s wolves=${result.meanWolfLifetime.toFixed(1)}s`);
     console.log(`Pen half-width: ${result.finalHalf.toFixed(1)}m`);
@@ -375,14 +393,33 @@ function tightEcosystemHalf(rabbits, wolves, grass) {
 }
 
 function maybeGrowEcosystemPen(env, metrics) {
-  if (metrics.half >= metrics.targetHalf || metrics.history.length < 40) return;
+  if (metrics.half >= metrics.targetHalf || metrics.history.length < 120) return false;
   const score = p => p.nRabbits + p.nWolves * 2;
-  const recent = mean(metrics.history.slice(-12).map(score));
-  const older = mean(metrics.history.slice(-40, -28).map(score));
-  if (Math.abs(recent - older) / Math.max(1, Math.abs(older)) > 0.05) return;
-  metrics.half = Math.min(metrics.targetHalf, metrics.half * 1.35 + 0.25);
+  const recent = mean(metrics.history.slice(-30).map(score));
+  const older = mean(metrics.history.slice(-120, -90).map(score));
+  if (Math.abs(recent - older) / Math.max(1, Math.abs(older)) > 0.05) return false;
+  metrics.half = Math.min(metrics.targetHalf, metrics.half + Math.min(0.35, (metrics.targetHalf - metrics.half) * 0.12));
   env.env.config.bounds = metrics.half;
   env.env.config.visionRadius = Math.max(6, metrics.half * 1.4);
+  return true;
+}
+
+function spawnPairAtEdge(env, archetype, half) {
+  const a = Math.random() * Math.PI * 2;
+  const r = half * 0.82;
+  const cx = Math.cos(a) * r;
+  const cz = Math.sin(a) * r;
+  const sep = archetype === 'wolf' ? 0.8 : 0.5;
+  spawnEcosystemEntity(env, archetype, cx - Math.sin(a) * sep, cz + Math.cos(a) * sep);
+  spawnEcosystemEntity(env, archetype, cx + Math.sin(a) * sep, cz - Math.cos(a) * sep);
+}
+
+function addOuterGrass(env, half, targetCount) {
+  while (env.grass.length < targetCount + Math.floor(half / 3)) {
+    const a = Math.random() * Math.PI * 2;
+    const r = half * (0.55 + Math.random() * 0.35);
+    spawnGrass(env, Math.cos(a) * r, Math.sin(a) * r);
+  }
 }
 
 function mean(xs) {

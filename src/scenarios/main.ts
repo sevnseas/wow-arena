@@ -278,7 +278,7 @@ const SCENARIOS: Record<string, ScenarioDef> = {
 };
 
 function createEcosystemWorld(half: number) {
-  const initialHalf = tightEcosystemHalf(6, 2, 12);
+  const initialHalf = tightEcosystemHalf(8, 2, 12);
   const env = createEnv4({ bounds: initialHalf, visionRadius: Math.max(6, initialHalf * 1.4) }, 31);
   const group = new THREE.Group();
   group.name = 'EcosystemScenario';
@@ -295,6 +295,9 @@ function createEcosystemWorld(half: number) {
     elapsed: 0,
     half: initialHalf,
     targetHalf: half,
+    grassTarget: 12,
+    immigrants: { rabbit: 0, wolf: 0 },
+    lastImmigrationAt: { rabbit: 0, wolf: 0 },
   };
 
   for (let i = 0; i < 12; i++) {
@@ -311,8 +314,8 @@ function createEcosystemWorld(half: number) {
     grassMeshes.set(g.id, mesh);
   }
 
-  for (let i = 0; i < 6; i++) {
-    const a = i / 6 * Math.PI * 2;
+  for (let i = 0; i < 8; i++) {
+    const a = i / 8 * Math.PI * 2;
     spawnEcosystemEntity(env, 'rabbit', Math.cos(a) * initialHalf * 0.42, Math.sin(a) * initialHalf * 0.42);
   }
   spawnEcosystemEntity(env, 'wolf', -initialHalf * 0.5, -initialHalf * 0.5);
@@ -388,12 +391,16 @@ function createEcosystemWorld(half: number) {
     const sec = Math.floor(metrics.elapsed);
     if (sec !== metrics.lastSample) {
       metrics.lastSample = sec;
-      const rabbits = env.entities.filter(e => e.alive && e.archetype === 'rabbit').length;
-      const wolves = env.entities.filter(e => e.alive && e.archetype === 'wolf').length;
+      let rabbits = env.entities.filter(e => e.alive && e.archetype === 'rabbit').length;
+      let wolves = env.entities.filter(e => e.alive && e.archetype === 'wolf').length;
+      maybeImmigrate(env, metrics, rabbits, wolves);
+      rabbits = env.entities.filter(e => e.alive && e.archetype === 'rabbit').length;
+      wolves = env.entities.filter(e => e.alive && e.archetype === 'wolf').length;
       metrics.history.push({ t: sec, rabbits, wolves });
       while (metrics.history.length > 120) metrics.history.shift();
       if (metrics.extinctionAt === null && (rabbits === 0 || wolves === 0)) metrics.extinctionAt = sec;
-      maybeGrowEcosystemPen(env, metrics);
+      const grew = maybeGrowEcosystemPen(env, metrics);
+      if (grew) addOuterGrass(env, group, grassMeshes, metrics.half, metrics.grassTarget);
     }
     syncMeshes();
   }
@@ -418,15 +425,61 @@ function tightEcosystemHalf(rabbits: number, wolves: number, grass: number): num
   return Math.max(1.5, Math.sqrt((entityArea + grassArea) / 0.70) / 2);
 }
 
-function maybeGrowEcosystemPen(env: RLEnv4, metrics: { history: Array<{ rabbits: number; wolves: number }>; half: number; targetHalf: number }): void {
-  if (metrics.half >= metrics.targetHalf || metrics.history.length < 40) return;
+function maybeGrowEcosystemPen(env: RLEnv4, metrics: { history: Array<{ rabbits: number; wolves: number }>; half: number; targetHalf: number }): boolean {
+  if (metrics.half >= metrics.targetHalf || metrics.history.length < 120) return false;
   const score = (p: { rabbits: number; wolves: number }) => p.rabbits + p.wolves * 2;
-  const recent = metrics.history.slice(-12).reduce((s, p) => s + score(p), 0) / 12;
-  const older = metrics.history.slice(-40, -28).reduce((s, p) => s + score(p), 0) / 12;
-  if (Math.abs(recent - older) / Math.max(1, Math.abs(older)) > 0.05) return;
-  metrics.half = Math.min(metrics.targetHalf, metrics.half * 1.35 + 0.25);
+  const recent = metrics.history.slice(-30).reduce((s, p) => s + score(p), 0) / 30;
+  const older = metrics.history.slice(-120, -90).reduce((s, p) => s + score(p), 0) / 30;
+  if (Math.abs(recent - older) / Math.max(1, Math.abs(older)) > 0.05) return false;
+  metrics.half = Math.min(metrics.targetHalf, metrics.half + Math.min(0.35, (metrics.targetHalf - metrics.half) * 0.12));
   env.env.config.bounds = metrics.half;
   env.env.config.visionRadius = Math.max(6, metrics.half * 1.4);
+  return true;
+}
+
+function maybeImmigrate(
+  env: RLEnv4,
+  metrics: { elapsed: number; half: number; lastImmigrationAt: { rabbit: number; wolf: number }; immigrants: { rabbit: number; wolf: number } },
+  rabbits: number,
+  wolves: number,
+): void {
+  if (wolves < 2 && rabbits >= 4 && metrics.elapsed - metrics.lastImmigrationAt.wolf >= 18) {
+    spawnPairAtEdge(env, 'wolf', metrics.half);
+    metrics.immigrants.wolf += 2;
+    metrics.lastImmigrationAt.wolf = metrics.elapsed;
+  }
+  if (rabbits < 6 && metrics.elapsed - metrics.lastImmigrationAt.rabbit >= 18) {
+    spawnPairAtEdge(env, 'rabbit', metrics.half);
+    spawnPairAtEdge(env, 'rabbit', metrics.half);
+    metrics.immigrants.rabbit += 4;
+    metrics.lastImmigrationAt.rabbit = metrics.elapsed;
+  }
+}
+
+function spawnPairAtEdge(env: RLEnv4, archetype: 'rabbit' | 'wolf', half: number): void {
+  const a = Math.random() * Math.PI * 2;
+  const r = half * 0.82;
+  const cx = Math.cos(a) * r;
+  const cz = Math.sin(a) * r;
+  const sep = archetype === 'wolf' ? 0.8 : 0.5;
+  spawnEcosystemEntity(env, archetype, cx - Math.sin(a) * sep, cz + Math.cos(a) * sep);
+  spawnEcosystemEntity(env, archetype, cx + Math.sin(a) * sep, cz - Math.cos(a) * sep);
+}
+
+function addOuterGrass(env: RLEnv4, group: THREE.Group, grassMeshes: Map<number, THREE.Mesh>, half: number, targetCount: number): void {
+  while (env.grass.length < targetCount + Math.floor(half / 3)) {
+    const a = Math.random() * Math.PI * 2;
+    const r = half * (0.55 + Math.random() * 0.35);
+    const g = spawnGrass(env, Math.cos(a) * r, Math.sin(a) * r);
+    const mesh = new THREE.Mesh(
+      new THREE.CircleGeometry(0.6, 24),
+      new THREE.MeshBasicMaterial({ color: 0x54d66a, transparent: true, opacity: 0.75 }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(g.x, 0.025, g.z);
+    group.add(mesh);
+    grassMeshes.set(g.id, mesh);
+  }
 }
 
 function spawnEcosystemEntity(env: RLEnv4, archetype: 'rabbit' | 'wolf', x: number, z: number) {
@@ -607,7 +660,7 @@ function updateHud(): void {
   hud.innerHTML = `
     <h1>${scen.name}</h1>
     <div class="row"><span class="lbl">policy</span><span class="val">${provenance}</span></div>
-    ${meta ? `<div class="row"><span class="lbl">trained</span><span class="val" style="font-size:10px">best ma50 ${meta.bestEpisodeMA50.toFixed(0)} @${meta.bestStage}/ep${meta.bestEpisodeIndex} · hidden=${meta.policyConfig.hidden} lr=${meta.policyConfig.lr}</span></div>` : ''}
+    ${meta ? `<div class="row"><span class="lbl">trained</span><span class="val" style="font-size:10px">best ma50 ${(meta.bestEpisodeMA50 ?? meta.bestMetricScore50 ?? 0).toFixed(0)} @${meta.bestStage}/ep${meta.bestEpisodeIndex} · hidden=${meta.policyConfig.hidden} lr=${meta.policyConfig.lr}</span></div>` : ''}
     ${krRows ? `<div style="margin:4px 0 6px 0;font-family:monospace">${krRows}</div>` : ''}
     <hr style="border:0;border-top:1px solid #333;margin:6px 0">
     <div class="row"><span class="lbl">hero</span><span class="val">${hero.archetype} · ${hero.hp.toFixed(0)}/${hero.maxHp.toFixed(0)} hp</span></div>
@@ -647,6 +700,7 @@ function updateEcosystemHud(eco: EcosystemWorld): void {
     <div class="row"><span class="lbl">pen</span><span class="val">${eco.metrics.half.toFixed(1)}m → ${eco.metrics.targetHalf.toFixed(0)}m</span></div>
     <div class="row"><span class="lbl">births</span><span class="val">R ${eco.metrics.births.rabbit} · W ${eco.metrics.births.wolf}</span></div>
     <div class="row"><span class="lbl">deaths</span><span class="val">R ${eco.metrics.deaths.rabbit} · W ${eco.metrics.deaths.wolf}</span></div>
+    <div class="row"><span class="lbl">spawn</span><span class="val">R ${eco.metrics.immigrants.rabbit} · W ${eco.metrics.immigrants.wolf}</span></div>
     <div class="row"><span class="lbl">avg age</span><span class="val">R ${avgAge(rabbits).toFixed(1)}s · W ${avgAge(wolves).toFixed(1)}s</span></div>
     <div class="row"><span class="lbl">grass</span><span class="val">${(grassCoverage * 100).toFixed(0)}%</span></div>
     <div class="row"><span class="lbl">extinct</span><span class="val">${extinctionEstimate}</span></div>
