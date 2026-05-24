@@ -41,6 +41,7 @@ type RabbitState = 'hop' | 'rest' | 'stopped';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
 import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState, notePreyAttacker, tickGrazeHeal } from './prey';
 import { Intent, INTENT_COUNT, type PolicyAgentRef } from './rl';
+import { actionToUnitVec, isMovementAction, type PolicyAgent4Ref } from './rl/runtime4';
 
 interface Rabbit {
   parts: RabbitParts;
@@ -300,6 +301,39 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
           return;
         }
         // Attack / CC → no-op for rabbits; they let foraging continue.
+      },
+    };
+  }
+
+  /** Rabbits as RL4 policy agents (for ecosystem training). */
+  getPolicy4Agents(): PolicyAgent4Ref[] {
+    return this.rabbits.filter(r => !r.prey.dead && !r.held).map(r => this.makePolicy4Agent(r));
+  }
+
+  private makePolicy4Agent(r: Rabbit): PolicyAgent4Ref {
+    return {
+      id: r.id,
+      team: 'prey',
+      archetype: 'rabbit',
+      size: RABBIT_RADIUS,
+      get alive() { return !r.prey.dead && !r.held; },
+      get hp() { return r.prey.hp; },
+      get maxHp() { return r.prey.maxHp; },
+      get pos() { return { x: r.pos.x, z: r.pos.z }; },
+      applyAction(action) {
+        if (r.prey.dead || r.held) return;
+        // Clear flee state to let policy drive movement.
+        r.prey.fleeUntil = 0;
+        if (isMovementAction(action)) {
+          const dir = actionToUnitVec(action);
+          // Set target ~3m ahead in the chosen direction (smaller reach than wolves for rabbit scale).
+          const reach = 3;
+          r.target.set(r.pos.x + dir.x * reach, 0, r.pos.z + dir.z * reach);
+        } else {
+          // Ability action (Interact for reproduction) — stand still to use it.
+          // The actual action is handled by the RL4 environment step, not here.
+          r.target.copy(r.pos);
+        }
       },
     };
   }

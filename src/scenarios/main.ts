@@ -187,7 +187,7 @@ const SCENARIOS: Record<string, ScenarioDef> = {
       (wolves as any).spawnWolf?.();
       stripDecorations(['WolvesSpawningGround']);
       const brainAgents = wolves.getPolicy4Agents();
-      const observables = rabbits.getPolicyAgents().map(rl3ToObs4);
+      const observables = rabbits.getPolicy4Agents();
       return {
         providers: [rabbits], brainAgents, observables,
         hero: brainAgents[0],
@@ -205,7 +205,7 @@ const SCENARIOS: Record<string, ScenarioDef> = {
       (wolves as any).spawnWolf?.();
       stripDecorations(['WolvesSpawningGround']);
       const brainAgents = wolves.getPolicy4Agents();
-      const observables = rabbits.getPolicyAgents().map(rl3ToObs4);
+      const observables = rabbits.getPolicy4Agents();
       return {
         providers: [rabbits], brainAgents, observables,
         hero: brainAgents[0],
@@ -223,7 +223,7 @@ const SCENARIOS: Record<string, ScenarioDef> = {
       (wolves as any).spawnWolf?.();
       stripDecorations(['WolvesSpawningGround']);
       const brainAgents = wolves.getPolicy4Agents();
-      const observables = rabbits.getPolicyAgents().map(rl3ToObs4);
+      const observables = rabbits.getPolicy4Agents();
       return {
         providers: [rabbits], brainAgents, observables,
         hero: brainAgents[0],
@@ -267,7 +267,7 @@ const SCENARIOS: Record<string, ScenarioDef> = {
       const cats = new CatColony(scene, 0, half, null);
       (cats as any).spawnCat?.();
       const brainAgents = cats.getPolicy4Agents();
-      const observables = rabbits.getPolicyAgents().map(rl3ToObs4);
+      const observables = rabbits.getPolicy4Agents();
       return {
         providers: [rabbits], brainAgents, observables,
         hero: brainAgents[0],
