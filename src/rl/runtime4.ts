@@ -28,6 +28,10 @@ export interface PolicyAgent4Ref {
   alive: boolean;
   hp: number;
   maxHp: number;
+  /** Age in seconds (optional, defaults to 0 for scenarios). */
+  age?: number;
+  /** Reproduction counter: grassEaten for rabbits, preyEaten for wolves (optional, defaults to 0). */
+  counter?: number;
   /** World-space position (z is depth in the game world). */
   pos: { x: number; z: number };
   /** Apply the policy's chosen Action for the next decision window. */
@@ -239,6 +243,17 @@ export class PolicyDriver4 {
       state[base + 5] = archetypeCode(o.archetype) / 6;
       state[base + 6] = o.team === a.team ? 0 : 1;
     }
+
+    // Self-state features (HP%, age%, counter%, nearest grass X/Z).
+    const selfBase = MAX_ENTITIES_RL4 * FEATURES_PER_ENTITY_RL4;
+    state[selfBase + 0] = a.maxHp > 0 ? Math.max(0, a.hp / a.maxHp) : 0;
+    state[selfBase + 1] = a.age !== undefined ? Math.min(1, (a.age ?? 0) / 60) : 0; // Assume 60s max age for scenarios
+    const counter = a.counter ?? 0;
+    const threshold = a.archetype === 'rabbit' ? 3 : a.archetype === 'wolf' ? 1 : 0;
+    state[selfBase + 2] = threshold > 0 ? Math.min(1, counter / threshold) : 0;
+    // Grass location: not available in scenario, set to 0 (no visible grass).
+    state[selfBase + 3] = 0;
+    state[selfBase + 4] = 0;
     return state;
   }
 }

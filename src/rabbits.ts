@@ -319,6 +319,8 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
       get alive() { return !r.prey.dead && !r.held; },
       get hp() { return r.prey.hp; },
       get maxHp() { return r.prey.maxHp; },
+      get age() { return 0; }, // Scenarios don't track rabbit age
+      get counter() { return 0; }, // Scenarios don't track grassEaten
       get pos() { return { x: r.pos.x, z: r.pos.z }; },
       applyAction(action) {
         if (r.prey.dead || r.held) return;

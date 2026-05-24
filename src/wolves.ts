@@ -488,6 +488,8 @@ export class WolfPack implements PreyProvider {
       get alive() { return !w.dead; },
       get hp() { return w.hp; },
       get maxHp() { return w.maxHp; },
+      get age() { return 0; }, // Scenarios don't track wolf age
+      get counter() { return 0; }, // Scenarios don't track preyEaten
       get pos() { return { x: w.pos.x, z: w.pos.z }; },
       applyAction(action, focus) {
         if (w.dead) return;
