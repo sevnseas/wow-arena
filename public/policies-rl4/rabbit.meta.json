@@ -1,13 +1,186 @@
 {
   "archetype": "rabbit",
-  "trainedAt": "2026-05-24T20:12:18.527Z",
-  "trainingType": "ecosystem-balance",
-  "episodes": 300,
+  "trainedAt": "2026-05-24T20:12:46.583Z",
+  "episodesPerStage": 50,
+  "stages": [
+    {
+      "label": "S0-graze",
+      "role": "movement",
+      "learners": [
+        "rabbit"
+      ],
+      "targetBounds": 2,
+      "grass": 4,
+      "rabbits": 1,
+      "wolves": 0,
+      "maxAgeR": 9999,
+      "maxAgeW": 9999,
+      "starveR": 0,
+      "starveW": 0,
+      "grassSpawnMode": "near",
+      "reproThresholdR": 3,
+      "reproThresholdW": 1,
+      "metrics": {
+        "rabbitBirthsPerMin": 0,
+        "wolfBirthsPerMin": 0,
+        "wolfKillRate": 0,
+        "meanRabbitLifetime": 60.000000000000576,
+        "meanWolfLifetime": 0,
+        "startBounds": 1.35,
+        "endBounds": 1.35,
+        "births": {
+          "rabbit": 0,
+          "wolf": 0
+        },
+        "kills": 0
+      }
+    },
+    {
+      "label": "S1-survive",
+      "role": "movement",
+      "learners": [
+        "rabbit"
+      ],
+      "targetBounds": 3,
+      "grass": 8,
+      "rabbits": 1,
+      "wolves": 0,
+      "maxAgeR": 90,
+      "maxAgeW": 9999,
+      "starveR": 0.25,
+      "starveW": 0,
+      "grassSpawnMode": "scatter",
+      "reproThresholdR": 3,
+      "reproThresholdW": 1,
+      "metrics": {
+        "rabbitBirthsPerMin": 0,
+        "wolfBirthsPerMin": 0,
+        "wolfKillRate": 0,
+        "meanRabbitLifetime": 60.000000000000576,
+        "meanWolfLifetime": 0,
+        "startBounds": 1.6095278009707286,
+        "endBounds": 1.6095278009707286,
+        "births": {
+          "rabbit": 0,
+          "wolf": 0
+        },
+        "kills": 0
+      }
+    },
+    {
+      "label": "S2-repro",
+      "role": "reproduction",
+      "learners": [
+        "rabbit"
+      ],
+      "targetBounds": 5,
+      "grass": 8,
+      "rabbits": 2,
+      "wolves": 0,
+      "maxAgeR": 90,
+      "maxAgeW": 9999,
+      "starveR": 0.25,
+      "starveW": 0,
+      "grassSpawnMode": "scatter",
+      "reproThresholdR": 2,
+      "reproThresholdW": 1,
+      "metrics": {
+        "rabbitBirthsPerMin": 2.9,
+        "wolfBirthsPerMin": 0,
+        "wolfKillRate": 0,
+        "meanRabbitLifetime": 38.17551020408194,
+        "meanWolfLifetime": 0,
+        "startBounds": 1.8339912035280832,
+        "endBounds": 1.8339912035280832,
+        "births": {
+          "rabbit": 145,
+          "wolf": 0
+        },
+        "kills": 0
+      }
+    },
+    {
+      "label": "S3-hunt",
+      "role": "movement",
+      "learners": [
+        "rabbit",
+        "wolf"
+      ],
+      "targetBounds": 5,
+      "grass": 6,
+      "rabbits": 2,
+      "wolves": 1,
+      "maxAgeR": 90,
+      "maxAgeW": 120,
+      "starveR": 0.25,
+      "starveW": 0.2,
+      "grassSpawnMode": "scatter",
+      "reproThresholdR": 2,
+      "reproThresholdW": 1,
+      "metrics": {
+        "rabbitBirthsPerMin": 1.66,
+        "wolfBirthsPerMin": 0,
+        "wolfKillRate": 0.78,
+        "meanRabbitLifetime": 39.806557377049494,
+        "meanWolfLifetime": 60.000000000000576,
+        "startBounds": 2.095938054274788,
+        "endBounds": 2.095938054274788,
+        "births": {
+          "rabbit": 83,
+          "wolf": 0
+        },
+        "kills": 39
+      }
+    },
+    {
+      "label": "S4-eco",
+      "role": "ecosystem",
+      "learners": [
+        "rabbit",
+        "wolf"
+      ],
+      "targetBounds": 10,
+      "grass": 12,
+      "rabbits": [
+        6,
+        10
+      ],
+      "wolves": [
+        1,
+        2
+      ],
+      "maxAgeR": 90,
+      "maxAgeW": 120,
+      "starveR": 0.25,
+      "starveW": 0.2,
+      "grassSpawnMode": "scatter",
+      "reproThresholdR": 2,
+      "reproThresholdW": 1,
+      "metrics": {
+        "rabbitBirthsPerMin": 7.44,
+        "wolfBirthsPerMin": 0.42,
+        "wolfKillRate": 1.37,
+        "meanRabbitLifetime": 40.29258312020474,
+        "meanWolfLifetime": 51.149484536082944,
+        "startBounds": 3.663819947792014,
+        "endBounds": 3.663819947792014,
+        "births": {
+          "rabbit": 372,
+          "wolf": 21
+        },
+        "kills": 137
+      }
+    }
+  ],
+  "bestMetricScore50": 123.68693605131217,
+  "bestStage": "S5-eco",
+  "bestEpisodeIndex": 16,
   "policyConfig": {
     "version": 2,
     "hidden": 64,
-    "lr": 0.0015,
-    "baselineEMA": 0.98,
+    "lr": 0.002,
+    "baselineEMA": 0.95,
     "entropyCoef": 0.01
-  }
+  },
+  "historyLength": 250
 }
