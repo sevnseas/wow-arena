@@ -1,7 +1,7 @@
 {
   "archetype": "wolf",
-  "trainedAt": "2026-05-24T16:12:29.328Z",
-  "episodesPerStage": 100,
+  "trainedAt": "2026-05-24T16:14:16.604Z",
+  "episodesPerStage": 300,
   "stages": [
     {
       "label": "S0-graze",
@@ -24,10 +24,10 @@
         "rabbitBirthsPerMin": 0,
         "wolfBirthsPerMin": 0,
         "wolfKillRate": 0,
-        "meanRabbitLifetime": 60.000000000000654,
+        "meanRabbitLifetime": 60.00000000000033,
         "meanWolfLifetime": 0,
         "startBounds": 1.35,
-        "endBounds": 1.35,
+        "endBounds": 1.9999999991485857,
         "births": {
           "rabbit": 0,
           "wolf": 0
@@ -56,10 +56,10 @@
         "rabbitBirthsPerMin": 0,
         "wolfBirthsPerMin": 0,
         "wolfKillRate": 0,
-        "meanRabbitLifetime": 60.000000000000654,
+        "meanRabbitLifetime": 60.00000000000033,
         "meanWolfLifetime": 0,
         "startBounds": 1.6095278009707286,
-        "endBounds": 1.6095278009707286,
+        "endBounds": 2.9999999981786645,
         "births": {
           "rabbit": 0,
           "wolf": 0
@@ -85,15 +85,15 @@
       "reproThresholdR": 2,
       "reproThresholdW": 1,
       "metrics": {
-        "rabbitBirthsPerMin": 3.21,
+        "rabbitBirthsPerMin": 3.6233333333333335,
         "wolfBirthsPerMin": 0,
         "wolfKillRate": 0,
-        "meanRabbitLifetime": 37.93090211132452,
+        "meanRabbitLifetime": 38.0607587433314,
         "meanWolfLifetime": 0,
         "startBounds": 1.8339912035280832,
-        "endBounds": 1.8339912035280832,
+        "endBounds": 4.110197684604349,
         "births": {
-          "rabbit": 321,
+          "rabbit": 1087,
           "wolf": 0
         },
         "kills": 0
@@ -118,18 +118,18 @@
       "reproThresholdR": 2,
       "reproThresholdW": 1,
       "metrics": {
-        "rabbitBirthsPerMin": 2.29,
+        "rabbitBirthsPerMin": 1.97,
         "wolfBirthsPerMin": 0,
-        "wolfKillRate": 0.81,
-        "meanRabbitLifetime": 37.41864801864821,
-        "meanWolfLifetime": 60.000000000000654,
+        "wolfKillRate": 1.0166666666666666,
+        "meanRabbitLifetime": 37.7177162048699,
+        "meanWolfLifetime": 60.00000000000033,
         "startBounds": 2.095938054274788,
-        "endBounds": 2.095938054274788,
+        "endBounds": 4.589348759409364,
         "births": {
-          "rabbit": 229,
+          "rabbit": 591,
           "wolf": 0
         },
-        "kills": 81
+        "kills": 305
       }
     },
     {
@@ -157,24 +157,24 @@
       "reproThresholdR": 2,
       "reproThresholdW": 1,
       "metrics": {
-        "rabbitBirthsPerMin": 7.27,
-        "wolfBirthsPerMin": 0.15,
-        "wolfKillRate": 0.705,
-        "meanRabbitLifetime": 43.76064935064939,
-        "meanWolfLifetime": 56.86280487804936,
+        "rabbitBirthsPerMin": 4.083333333333333,
+        "wolfBirthsPerMin": 0.08666666666666667,
+        "wolfKillRate": 0.7633333333333333,
+        "meanRabbitLifetime": 47.080876274455875,
+        "meanWolfLifetime": 57.84128630705415,
         "startBounds": 3.663819947792014,
-        "endBounds": 3.663819947792014,
+        "endBounds": 8.067222707461717,
         "births": {
-          "rabbit": 727,
-          "wolf": 15
+          "rabbit": 1225,
+          "wolf": 26
         },
-        "kills": 141
+        "kills": 458
       }
     }
   ],
-  "bestMetricScore50": 4.685555555555574,
+  "bestMetricScore50": 5.207222222222239,
   "bestStage": "S5-eco",
-  "bestEpisodeIndex": 9,
+  "bestEpisodeIndex": 119,
   "policyConfig": {
     "version": 2,
     "hidden": 64,
@@ -182,5 +182,5 @@
     "baselineEMA": 0.95,
     "entropyCoef": 0.01
   },
-  "historyLength": 200
+  "historyLength": 600
 }
