@@ -1,14 +1,14 @@
 {
   "archetype": "wolf",
-  "trainingDate": "2026-05-24T19:59:10.744Z",
-  "trainingType": "hunt-v4-simple-reward",
-  "episodes": 400,
-  "finalKillRate": 0.92,
-  "bestKillRate": 1,
+  "trainingDate": "2026-05-24T20:04:45.292Z",
+  "trainingType": "hunt-final-2k-steps",
+  "episodes": 600,
+  "finalKillRate": 1,
+  "bestKillRate": 1.0166666666666666,
   "config": {
     "hidden": 64,
-    "lr": 0.001,
-    "baselineEMA": 0.99,
-    "entropyCoef": 0.005
+    "lr": 0.0015,
+    "baselineEMA": 0.98,
+    "entropyCoef": 0.01
   }
 }
