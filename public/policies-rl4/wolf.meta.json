@@ -1,14 +1,15 @@
 {
   "archetype": "wolf",
-  "trainedAt": "2026-05-24T20:42:43.325Z",
-  "trainingType": "minimal-direction-overfit",
-  "episodes": 1,
-  "accuracy": 100,
+  "trainedAt": "2026-05-24T20:43:53.132Z",
+  "trainingType": "policy4-chase-simple",
+  "episodes": 200,
+  "finalAvgMinDist": 0.8218676162709357,
+  "finalSuccessRate": 0.45,
   "policyConfig": {
     "version": 2,
-    "hidden": 2,
-    "lr": 0.1,
-    "baselineEMA": 0.9,
-    "entropyCoef": 0
+    "hidden": 32,
+    "lr": 0.005,
+    "baselineEMA": 0.95,
+    "entropyCoef": 0.01
   }
 }
