@@ -195,6 +195,25 @@ const SCENARIOS: Record<string, ScenarioDef> = {
       };
     },
   },
+  'wolf-hunts-static': {
+    name: 'wolf hunts static rabbit · pen 3m (test)',
+    half: 3,
+    spawn(half) {
+      const rabbits = new RabbitWarren(scene, 0, half, null);
+      (rabbits as any).spawnRabbit?.();
+      const wolves = new WolfPack(scene, 0, half, null, [rabbits], new THREE.Vector3(0.3, 0, 0.3));
+      (wolves as any).spawnWolf?.();
+      stripDecorations(['WolvesSpawningGround']);
+      const brainAgents = wolves.getPolicy4Agents();
+      // Don't use rabbit policy — just let them wander naturally to isolate wolf behavior
+      const observables: any[] = [];
+      return {
+        providers: [rabbits], brainAgents, observables,
+        hero: brainAgents[0],
+        tick(dt) { wolves.update(dt); rabbits.update(dt); },
+      };
+    },
+  },
   'wolf-vs-rabbit-mid': {
     name: 'wolf vs rabbit · pen 6m',
     half: 6,
