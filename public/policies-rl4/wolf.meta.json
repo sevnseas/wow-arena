@@ -1,14 +1,18 @@
 {
   "archetype": "wolf",
-  "trainingDate": "2026-05-24T20:04:45.292Z",
-  "trainingType": "hunt-final-2k-steps",
-  "episodes": 600,
+  "trainedAt": "2026-05-24T20:09:55.907Z",
+  "trainingType": "hunt-optimized-speed",
+  "episodes": 800,
   "finalKillRate": 1,
   "bestKillRate": 1.0166666666666666,
-  "config": {
+  "bestStage": "hunt-v5",
+  "bestEpisodeIndex": 799,
+  "bestMetricScore50": 4.057500000000001,
+  "policyConfig": {
+    "version": 2,
     "hidden": 64,
-    "lr": 0.0015,
-    "baselineEMA": 0.98,
-    "entropyCoef": 0.01
+    "lr": 0.002,
+    "baselineEMA": 0.97,
+    "entropyCoef": 0.015
   }
 }
