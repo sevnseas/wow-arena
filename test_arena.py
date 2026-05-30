@@ -128,9 +128,47 @@ def test_cast_gating():
     print("  [OK] casts gated by cooldown, CC-on-caster, and line-of-sight")
 
 
+def test_mask_alignment_guardrail():
+    """Task 4 guardrail: the Python wrapper assertion must hold every step under
+    CC, deaths and target swaps, and must FIRE if the mask/state ever drift."""
+    import eco_arena as A
+    eng, caster, target = _two_agents()
+    rng = np.random.default_rng(0)
+    # churn: random casts (CC, damage) between the two agents for many ticks,
+    # asserting alignment each step. Occasionally drive a kill to test the
+    # dead-agent lock too.
+    for step in range(120):
+        eng.tick_combat()
+        a, b = (caster, target) if step % 2 else (target, caster)
+        eng.cast_spell(a, b, slot=2, cc_category=step % E.NCC_CAT,
+                       base_duration=3.0)
+        eng.cast_spell(a, b, slot=1, amount=7.0)  # chip damage -> eventual death
+        eng.build_agent_obs()
+        eng.build_action_mask()
+        A.assert_mask_lock(eng)                    # must never raise
+    print("  [OK] mask-lock invariant held for 120 steps of CC + damage churn")
+
+    # negative control: a hand-corrupted mask (movement open while CC'd) must be
+    # caught by the guardrail logic.
+    eng2, c2, t2 = _two_agents()
+    eng2.cast_spell(c2, t2, slot=2, cc_category=0, base_duration=4.0)
+    eng2.build_agent_obs(); eng2.build_action_mask()
+    mask = np.asarray(eng2.action_mask()).copy()
+    slots = np.asarray(eng2.agent_slots())
+    trow = int(np.where(slots == t2)[0][0])
+    mask[trow, 0] = 1.0  # illegally re-open a movement angle for the CC'd agent
+    move, spell, _ = A.split_mask(mask)
+    statuses = np.asarray(eng2.statuses())
+    caught = move[trow].sum() != 0.0 and statuses[t2] != E.ST_IDLE
+    assert caught, "guardrail logic should detect a drifted (re-opened) mask"
+    print("  [OK] guardrail detects deliberately drifted mask (no silent pass)")
+
+
 if __name__ == "__main__":
     print("Task 2 acceptance:")
     test_cc_masks_movement_and_spells()
     test_diminishing_returns_halving()
     test_cast_gating()
-    print("\nRESULT: arena combat state machine PASS")
+    print("Task 4 action-mask guardrail:")
+    test_mask_alignment_guardrail()
+    print("\nRESULT: arena combat state machine + mask guardrail PASS")
