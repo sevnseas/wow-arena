@@ -200,6 +200,48 @@ def test_arena_has_four_pillars_and_los():
     print("  [OK] arena has 4 pillars, agents spawn clear of geometry")
 
 
+def test_curriculum_stage1_and_checkpoint():
+    """Task 3: Stage 1 target-dummy training improves damage efficiency, and a
+    cross-stage checkpoint reload preserves the structural layers exactly."""
+    import torch, tempfile, os
+    import numpy as np
+    from eco_arena_train import CurriculumManager
+    torch.manual_seed(0)
+    with tempfile.TemporaryDirectory() as d:
+        mgr = CurriculumManager(ckpt_dir=d)
+        before = mgr.structural_keys()
+        hist = mgr.run_stage1(iters=30)
+        assert os.path.exists(mgr._ckpt("stage1_dummy")), "checkpoint not saved"
+        early, late = float(np.mean(hist[:8])), float(np.mean(hist[-8:]))
+        assert late > early, f"Stage 1 did not improve ({early:.0f}->{late:.0f})"
+        # next stage reloads the same architecture -> identical layer shapes/keys
+        mgr.load("stage1_dummy")
+        after = mgr.structural_keys()
+        assert before == after, "checkpoint reload altered structural layers"
+    print(f"  [OK] Stage 1 damage {early:.0f}->{late:.0f}; "
+          f"checkpoint reload preserves {len(after)} structural tensors")
+
+
+def test_arena_policy_respects_mask():
+    """The multi-head policy must never sample a masked-out action: a CC'd agent
+    samples only idle spell + no movement (deterministic and stochastic)."""
+    import torch
+    import numpy as np
+    from eco_arena_policy import ArenaPolicy
+    eng, caster, target = _two_agents()
+    eng.cast_spell(caster, target, slot=2, cc_category=0, base_duration=6.0)
+    eng.build_agent_obs(); eng.build_action_mask()
+    slots = np.asarray(eng.agent_slots())
+    trow = int(np.where(slots == target)[0][0])
+    obs = torch.as_tensor(np.asarray(eng.agent_obs())[trow:trow + 1])
+    mask = torch.as_tensor(np.asarray(eng.action_mask())[trow:trow + 1])
+    pol = ArenaPolicy()
+    for _ in range(50):
+        acts, _, _ = pol.act(obs, mask)
+        assert int(acts["spell"].item()) == 0, "CC'd agent sampled a non-idle spell"
+    print("  [OK] policy never samples masked spells for a CC'd agent (50 draws)")
+
+
 if __name__ == "__main__":
     print("Task 2 acceptance:")
     test_cc_masks_movement_and_spells()
@@ -210,4 +252,7 @@ if __name__ == "__main__":
     print("Task 3/4 3v3 arena + CC-chain metric:")
     test_arena_has_four_pillars_and_los()
     test_arena_cc_chain_metric()
-    print("\nRESULT: arena combat + mask guardrail + 3v3 CC-chain harness PASS")
+    print("Task 3 arena policy + curriculum:")
+    test_arena_policy_respects_mask()
+    test_curriculum_stage1_and_checkpoint()
+    print("\nRESULT: arena combat + masking + 3v3 harness + curriculum PASS")

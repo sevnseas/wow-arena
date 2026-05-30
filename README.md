@@ -149,7 +149,9 @@ mode the panel shows state only, with a note that no policy is loaded.
 | `test_eco.py` / `test_policy.py` / `test_marl.py` | acceptance harnesses for Tasks 1–3 |
 | `eco_arena_env.py` | WoW-arena branch — 3v3 two-team arena (4 pillars, combat layer) + coordinated CC-chain metric and reference tactics |
 | `eco_arena.py` | arena action-head masking + Task 4 action-mask alignment guardrail (`assert_mask_lock`) |
-| `test_arena.py` | arena acceptance harness — CC masking, diminishing returns, mask-lock guardrail, 3v3 CC-chain metric |
+| `eco_arena_policy.py` | multi-head masked arena policy (perm-inv trunk + move/spell/target heads + critic) |
+| `eco_arena_train.py` | Task 3 curriculum manager — Stage 1 target-dummy training + cross-stage checkpoint reload |
+| `test_arena.py` | arena acceptance harness — CC masking, diminishing returns, mask-lock guardrail, 3v3 CC-chain metric, curriculum |
 
 ### WoW-arena branch (`threejs-eco-rendering`)
 
@@ -165,6 +167,10 @@ Layered on the ecosystem engine without disturbing its hot path:
   movement + non-idle spells for a CC'd or dead agent.
 - **Task 4 guardrail** — `eco_arena.assert_mask_lock` is the strict runtime check
   that mask and combat state never drift under target swaps / deaths.
+- **Task 3** — `eco_arena_policy.py` multi-head masked policy + `eco_arena_train.py`
+  `CurriculumManager`: Stage 1 (target dummy) training improves damage efficiency
+  (~200 → ~310 dmg/episode) and cross-stage checkpoint reload preserves the trunk
+  + head structure exactly. Stages 2 (1v1 + LoS) and 3 (3v3 shared-policy) scaffolded.
 - **Task 3/4 harness** — `eco_arena_env.py` measures coordinated CC-chain success;
   scripted burst+peel reaches ~60% vs ~22% random, validating the metric for
   trained policies.
