@@ -47,6 +47,23 @@ static constexpr int AOBS = LOCAL_DIM + DENSITY_DIM;   // 124
 static constexpr int GROUP_DIM = 5; // [same_species, threats, prey, local_agents, proximity]
 static constexpr int ASTAR_MAX_EXPANSIONS = 32;
 
+// ---- Task 2: arena combat state machine -------------------------------------
+// Spell slots (the action "Spell Slot Selection" head): 0 idle, 1 damage/heal,
+// 2 crowd-control, 3 defensive/trinket. CC categories for Diminishing Returns:
+// 0 stun, 1 polymorph (a CC spell declares its category so consecutive CCs of
+// the SAME category diminish, while a stun then a poly each land at full value).
+static constexpr int NSPELL   = 4;
+static constexpr int NCC_CAT  = 2;
+static constexpr int N_MOVE   = 16;   // 16 discrete movement angles
+static constexpr int N_TARGET = 6;    // current + 3 enemies + 2 allies
+static constexpr int MASK_DIM = N_MOVE + NSPELL + N_TARGET;  // 26
+// status enumeration
+static constexpr int8_t ST_IDLE        = 0;
+static constexpr int8_t ST_STUNNED     = 1;
+static constexpr int8_t ST_POLYMORPHED = 2;
+// Diminishing Returns: 1st CC full, 2nd halved, 3rd quartered, 4th+ immune.
+static const float DR_MULT[4] = { 1.0f, 0.5f, 0.25f, 0.0f };
+
 static const float DIRX[8] = { 1.f, 0.70710678f, 0.f, -0.70710678f,
                               -1.f, -0.70710678f, 0.f, 0.70710678f };
 static const float DIRY[8] = { 0.f, 0.70710678f, 1.f, 0.70710678f,
@@ -91,7 +108,8 @@ public:
           slot_buf({(size_t)MAX_TOTAL_ENTITIES}),
           type_buf({(size_t)MAX_TOTAL_ENTITIES}),
           id_buf({(size_t)MAX_TOTAL_ENTITIES}),
-          group_buf({(size_t)MAX_TOTAL_ENTITIES, (size_t)GROUP_DIM})
+          group_buf({(size_t)MAX_TOTAL_ENTITIES, (size_t)GROUP_DIM}),
+          mask_buf({(size_t)MAX_TOTAL_ENTITIES, (size_t)MASK_DIM})
     {
         rstate = seed ? seed : 0x9e3779b97f4a7c15ULL;
         ncx = std::max(1, (int)std::floor(world / cell));
@@ -105,6 +123,14 @@ public:
         astar_seen.assign(ncells, 0);
         astar_closed.assign(ncells, 0);
         astar_open.assign(ncells, 0);
+        // combat state pools (Task 2) -- allocated once, like every other pool
+        hp.assign(MAX_TOTAL_ENTITIES, 0.f);
+        mana.assign(MAX_TOTAL_ENTITIES, 0.f);
+        cc_timer.assign(MAX_TOTAL_ENTITIES, 0.f);
+        status.assign(MAX_TOTAL_ENTITIES, ST_IDLE);
+        cd.assign((size_t)MAX_TOTAL_ENTITIES * NSPELL, 0.f);
+        dr_stacks.assign((size_t)MAX_TOTAL_ENTITIES * NCC_CAT, 0);
+        dr_expire.assign((size_t)MAX_TOTAL_ENTITIES * NCC_CAT, 0.f);
         reset(seed);
     }
 
@@ -426,6 +452,130 @@ public:
         return line_of_sight(ex[a], ey[a], ex[b], ey[b]);
     }
 
+    // ---- Task 2: combat state machine ---------------------------------------
+    void set_combat_params(float hp_max_, float mana_max_, float dr_window_,
+                           float mana_regen_) {
+        hp_max = hp_max_; mana_max = mana_max_;
+        dr_window = dr_window_; mana_regen = mana_regen_;
+    }
+
+    // Advance every active agent's combat clocks by one tick: cooldowns, mana
+    // regen, CC duration, and DR-window decay (a CC category whose window
+    // elapses with no refresh forgets its stacks, so the next CC lands full).
+    void tick_combat() {
+        for (int s = 0; s < n_active; ++s) {
+            int i = alist[s];
+            int t = etype[i];
+            if (t != RABBIT && t != FOX) continue;
+            if (mana[i] < mana_max) {
+                mana[i] += mana_regen;
+                if (mana[i] > mana_max) mana[i] = mana_max;
+            }
+            for (int k = 0; k < NSPELL; ++k) {
+                float& c = cd[(size_t)i * NSPELL + k];
+                if (c > 0.f) c -= 1.f;
+            }
+            if (cc_timer[i] > 0.f) {
+                cc_timer[i] -= 1.f;
+                if (cc_timer[i] <= 0.f) { cc_timer[i] = 0.f; status[i] = ST_IDLE; }
+            }
+            for (int c = 0; c < NCC_CAT; ++c) {
+                float& e = dr_expire[(size_t)i * NCC_CAT + c];
+                if (e > 0.f) {
+                    e -= 1.f;
+                    if (e <= 0.f) { e = 0.f; dr_stacks[(size_t)i * NCC_CAT + c] = 0; }
+                }
+            }
+        }
+    }
+
+    // Cast spell `slot` from caster onto target. Returns true on a successful
+    // cast. Enforces: both alive arena agents, caster not CC'd, off cooldown,
+    // enough mana, and (for any spell needing a clear shot) line-of-sight not
+    // occluded by a pillar. CC (slot 2) applies Diminishing Returns by category.
+    bool cast_spell(int caster, int target, int slot, int cc_category,
+                    float base_duration, float amount) {
+        if (caster < 0 || caster >= MAX_TOTAL_ENTITIES
+            || target < 0 || target >= MAX_TOTAL_ENTITIES) return false;
+        int ct = etype[caster];
+        if ((ct != RABBIT && ct != FOX) || etype[target] == EMPTY) return false;
+        if (slot <= 0 || slot >= NSPELL) return false;
+        if (status[caster] != ST_IDLE || hp[caster] <= 0.f) return false;  // CC'd/dead can't act
+        if (cd[(size_t)caster * NSPELL + slot] > 0.f) return false;        // on cooldown
+        if (mana[caster] < spell_cost[slot]) return false;                 // not enough mana
+        // Damage (1) and CC (2) require an unobstructed line to the target.
+        bool needs_los = (slot == 1 || slot == 2);
+        if (needs_los && !line_of_sight(ex[caster], ey[caster], ex[target], ey[target]))
+            return false;
+        mana[caster] -= spell_cost[slot];
+        cd[(size_t)caster * NSPELL + slot] = spell_cd[slot];
+        if (slot == 1) {                 // damage / heal spitter
+            // amount > 0 damages an enemy; amount < 0 heals an ally.
+            hp[target] -= amount;
+            if (hp[target] > hp_max) hp[target] = hp_max;
+            if (hp[target] < 0.f) hp[target] = 0.f;
+        } else if (slot == 2) {          // crowd control with DR
+            int cat = (cc_category < 0 || cc_category >= NCC_CAT) ? 0 : cc_category;
+            int8_t& stk = dr_stacks[(size_t)target * NCC_CAT + cat];
+            float mult = DR_MULT[std::min((int)stk, 3)];
+            float dur = base_duration * mult;
+            if (dur > 0.f) {
+                // strongest CC wins: never shorten an existing longer lockout
+                if (dur > cc_timer[target]) cc_timer[target] = dur;
+                status[target] = (cat == 0) ? ST_STUNNED : ST_POLYMORPHED;
+            }
+            if (stk < 3) stk++;
+            dr_expire[(size_t)target * NCC_CAT + cat] = dr_window;
+        } else if (slot == 3) {          // defensive / trinket: self-clears CC
+            cc_timer[caster] = 0.f; status[caster] = ST_IDLE;
+        }
+        return true;
+    }
+
+    // Build the [n_agents, MASK_DIM] action mask in the same agent order as
+    // build_agent_obs(). 1 = action allowed, 0 = masked. A CC'd or dead agent
+    // has ALL movement and ALL non-idle spell heads forced to 0 -- the hard
+    // lock the Python wrapper asserts on. Spell slots also mask on cooldown /
+    // insufficient mana. Must be called after build_agent_obs().
+    void build_action_mask() {
+        float* m = mask_buf.mutable_data();
+        for (int a = 0; a < n_agents; ++a) {
+            int i = ((int32_t*)slot_buf.data())[a];
+            float* row = m + (size_t)a * MASK_DIM;
+            bool locked = (status[i] != ST_IDLE) || (hp[i] <= 0.f);
+            // movement head (16 angles)
+            for (int k = 0; k < N_MOVE; ++k) row[k] = locked ? 0.f : 1.f;
+            // spell head (idle always legal; others need !locked, off-cd, mana)
+            float* sp = row + N_MOVE;
+            sp[0] = 1.f;  // idle
+            for (int s = 1; s < NSPELL; ++s) {
+                bool ok = !locked && cd[(size_t)i * NSPELL + s] <= 0.f
+                          && mana[i] >= spell_cost[s];
+                sp[s] = ok ? 1.f : 0.f;
+            }
+            // target head: dead agents pick nothing, else all 6 selectable
+            float* tg = row + N_MOVE + NSPELL;
+            for (int k = 0; k < N_TARGET; ++k) tg[k] = (hp[i] <= 0.f) ? 0.f : 1.f;
+        }
+    }
+    py::array_t<float> action_mask() {
+        return py::array_t<float>({(size_t)n_agents, (size_t)MASK_DIM}, mask_buf.data());
+    }
+
+    // combat accessors (copied snapshots, safe across step)
+    py::array_t<float> hps()   { return py::array_t<float>({(size_t)MAX_TOTAL_ENTITIES}, hp.data()); }
+    py::array_t<float> manas() { return py::array_t<float>({(size_t)MAX_TOTAL_ENTITIES}, mana.data()); }
+    py::array_t<int8_t> statuses() { return py::array_t<int8_t>({(size_t)MAX_TOTAL_ENTITIES}, status.data()); }
+    py::array_t<float> cc_timers() { return py::array_t<float>({(size_t)MAX_TOTAL_ENTITIES}, cc_timer.data()); }
+    float get_hp(int i) const { return (i>=0 && i<MAX_TOTAL_ENTITIES) ? hp[i] : 0.f; }
+    float get_mana(int i) const { return (i>=0 && i<MAX_TOTAL_ENTITIES) ? mana[i] : 0.f; }
+    int get_status(int i) const { return (i>=0 && i<MAX_TOTAL_ENTITIES) ? status[i] : 0; }
+    float get_cc_timer(int i) const { return (i>=0 && i<MAX_TOTAL_ENTITIES) ? cc_timer[i] : 0.f; }
+    int get_dr_stacks(int i, int cat) const {
+        return (i>=0 && i<MAX_TOTAL_ENTITIES && cat>=0 && cat<NCC_CAT)
+            ? dr_stacks[(size_t)i * NCC_CAT + cat] : 0;
+    }
+
     int count_rabbits() const { return n_rabbits; }
     int count_foxes()   const { return n_foxes; }
     int count_grass()   const { return n_grass; }
@@ -470,6 +620,16 @@ private:
         if (t == RABBIT) n_rabbits++;
         else if (t == FOX) n_foxes++;
         else if (t == GRASS) n_grass++;
+        // fresh combat state for an arena agent (grass has none)
+        if (t == RABBIT || t == FOX) {
+            hp[i] = hp_max; mana[i] = mana_max;
+            cc_timer[i] = 0.f; status[i] = ST_IDLE;
+            for (int s = 0; s < NSPELL; ++s) cd[(size_t)i * NSPELL + s] = 0.f;
+            for (int c = 0; c < NCC_CAT; ++c) {
+                dr_stacks[(size_t)i * NCC_CAT + c] = 0;
+                dr_expire[(size_t)i * NCC_CAT + c] = 0.f;
+            }
+        }
         return i;
     }
     void kill(int i) {
@@ -687,6 +847,19 @@ private:
     py::array_t<int8_t> type_buf;
     py::array_t<uint64_t> id_buf;
     py::array_t<float> group_buf;
+
+    // ---- Task 2 combat state ----
+    std::vector<float> hp, mana, cc_timer;
+    std::vector<int8_t> status;
+    std::vector<float> cd;          // [MAX, NSPELL] cooldown remaining
+    std::vector<int8_t> dr_stacks;  // [MAX, NCC_CAT] diminishing-returns stacks
+    std::vector<float> dr_expire;   // [MAX, NCC_CAT] ticks until DR stack resets
+    py::array_t<float> mask_buf;    // [MAX, MASK_DIM] action mask, 1=allowed
+    float hp_max = 100.f, mana_max = 100.f;
+    float dr_window = 15.f;         // DR memory window (ticks)
+    float spell_cost[NSPELL] = { 0.f, 15.f, 25.f, 10.f };
+    float spell_cd[NSPELL]   = { 0.f,  1.f,  8.f, 20.f };
+    float mana_regen = 1.0f;
 };
 
 PYBIND11_MODULE(eco_engine, m) {
@@ -701,6 +874,14 @@ PYBIND11_MODULE(eco_engine, m) {
     m.attr("LOCAL_DIM") = LOCAL_DIM;
     m.attr("GROUP_DIM") = GROUP_DIM;
     m.attr("ASTAR_MAX_EXPANSIONS") = ASTAR_MAX_EXPANSIONS;
+    m.attr("NSPELL")   = NSPELL;
+    m.attr("NCC_CAT")  = NCC_CAT;
+    m.attr("N_MOVE")   = N_MOVE;
+    m.attr("N_TARGET") = N_TARGET;
+    m.attr("MASK_DIM") = MASK_DIM;
+    m.attr("ST_IDLE")        = ST_IDLE;
+    m.attr("ST_STUNNED")     = ST_STUNNED;
+    m.attr("ST_POLYMORPHED") = ST_POLYMORPHED;
     py::class_<EcoEngine>(m, "EcoEngine")
         .def(py::init<float, float, float, float, float, float, float, float,
                       float, float, float, float, int, int, int, int, float,
@@ -741,6 +922,24 @@ PYBIND11_MODULE(eco_engine, m) {
         .def("line_of_sight", &EcoEngine::line_of_sight,
              py::arg("x0"), py::arg("y0"), py::arg("x1"), py::arg("y1"))
         .def("slots_visible", &EcoEngine::slots_visible, py::arg("a"), py::arg("b"))
+        .def("set_combat_params", &EcoEngine::set_combat_params,
+             py::arg("hp_max"), py::arg("mana_max"), py::arg("dr_window"),
+             py::arg("mana_regen"))
+        .def("tick_combat", &EcoEngine::tick_combat)
+        .def("cast_spell", &EcoEngine::cast_spell, py::arg("caster"),
+             py::arg("target"), py::arg("slot"), py::arg("cc_category") = 0,
+             py::arg("base_duration") = 0.f, py::arg("amount") = 0.f)
+        .def("build_action_mask", &EcoEngine::build_action_mask)
+        .def("action_mask", &EcoEngine::action_mask)
+        .def("hps", &EcoEngine::hps)
+        .def("manas", &EcoEngine::manas)
+        .def("statuses", &EcoEngine::statuses)
+        .def("cc_timers", &EcoEngine::cc_timers)
+        .def("get_hp", &EcoEngine::get_hp)
+        .def("get_mana", &EcoEngine::get_mana)
+        .def("get_status", &EcoEngine::get_status)
+        .def("get_cc_timer", &EcoEngine::get_cc_timer)
+        .def("get_dr_stacks", &EcoEngine::get_dr_stacks, py::arg("i"), py::arg("cat"))
         .def("count_rabbits", &EcoEngine::count_rabbits)
         .def("count_foxes", &EcoEngine::count_foxes)
         .def("count_grass", &EcoEngine::count_grass)
