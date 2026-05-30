@@ -154,7 +154,7 @@ mode the panel shows state only, with a note that no policy is loaded.
 | `eco_arena_server.py` / `eco_arena_index.html` / `eco_arena_viewer.js` | live Three.js arena viewer (scripted / random / trained policy); orbit camera, hp bars, CC-status rings |
 | `test_arena.py` | arena acceptance harness — CC masking, diminishing returns, mask-lock guardrail, 3v3 CC-chain metric, curriculum |
 
-### WoW-arena branch (`threejs-eco-rendering`)
+### WoW-arena branch (`feature/wow-arena-3v3`)
 
 Layered on the ecosystem engine without disturbing its hot path:
 
