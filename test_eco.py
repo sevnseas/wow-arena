@@ -11,7 +11,7 @@ import time, resource
 import numpy as np
 import eco_engine as E
 
-RAND = np.full(E.MAX_TOTAL_ENTITIES, -1, dtype=np.int8)
+RAND = np.full((E.MAX_TOTAL_ENTITIES, 2), np.nan, dtype=np.float32)
 
 
 def rss_mb():
@@ -80,6 +80,145 @@ def test_capacity_graceful():
     print(f"  [OK] cap respected under spawn pressure (active={eng.active_count()})")
 
 
+def test_refuge_capacity_reserved():
+    eng = E.EcoEngine(world=30.0, cell_size=8.0, n_rabbits0=1010, n_foxes0=0,
+                      n_grass0=0, grass_max=0, grass_spawn_rate=0.0,
+                      rabbit_metab=0.0, rabbit_move_cost=0.0,
+                      repro_threshold=1.0, init_energy=2.0,
+                      refuge_rabbits=0, refuge_foxes=6, seed=9)
+    eng.step(RAND, False)
+    assert eng.active_count() == eng.capacity()
+    assert eng.count_foxes() == 6
+    print("  [OK] spawn pressure preserves six reserved fox-refuge slots")
+
+
+def test_astar_targets_and_fallback():
+    ek = dict(world=40.0, cell_size=4.0, vision=16.0, eat_radius=1.5,
+              move_speed=1.0, rabbit_metab=0.0, fox_metab=0.0,
+              rabbit_move_cost=0.0, repro_threshold=1e9, init_energy=10.0,
+              n_rabbits0=1, n_foxes0=0, n_grass0=0, grass_max=0,
+              grass_spawn_rate=0.0, seed=11)
+    eng = E.EcoEngine(**ek)
+    slot = int(np.where(np.asarray(eng.types()) == E.RABBIT)[0][0])
+    eng.set_position(slot, 6.0, 10.0)
+    eng.set_obstacle(2, 2)
+    actions = RAND.copy()
+    actions[slot] = (16.0, 0.0)
+    eng.step(actions, True)
+    assert eng.path_queries() == 1
+    assert 0 < eng.path_expansions() <= E.ASTAR_MAX_EXPANSIONS
+    assert eng.path_fallbacks() == 0
+    assert not eng.is_obstacle(int(np.asarray(eng.xs())[slot] // 4),
+                               int(np.asarray(eng.ys())[slot] // 4))
+
+    eng.set_position(slot, 6.0, 10.0)
+    actions[slot] = (4.0, 0.0)  # target cell is the solid wall itself
+    eng.step(actions, True)
+    assert eng.invalid_targets() == 1
+    assert eng.path_fallbacks() == 1
+    assert not eng.is_obstacle(int(np.asarray(eng.xs())[slot] // 4),
+                               int(np.asarray(eng.ys())[slot] // 4))
+    print("  [OK] target offsets route via bounded A*; blocked targets fall back safely")
+
+
+def test_los_and_pillars():
+    # Compact arena with a single central circular pillar (the arena geometry
+    # primitive). LoS through the pillar must be occluded; rays clearing it must
+    # stay visible; integer DDA must be perfectly direction-symmetric.
+    # vision spans the arena so a single target offset can sit past the pillar,
+    # forcing A* to plan a detour around it rather than re-targeting per step.
+    eng = E.EcoEngine(world=40.0, cell_size=2.0, vision=30.0,
+                      n_rabbits0=0, n_foxes0=1, n_grass0=0, grass_max=0,
+                      grass_spawn_rate=0.0, move_speed=1.0,
+                      fox_metab=0.0, repro_threshold=1e9, init_energy=1e9,
+                      seed=17)
+    eng.clear_obstacles()
+    eng.add_pillar(20.0, 20.0, 6.0)
+    assert eng.is_obstacle(10, 10), "pillar centre cell must be blocked"
+    assert not eng.is_obstacle(0, 0), "far corner must be clear"
+    assert not eng.line_of_sight(5, 20, 35, 20), "ray through pillar must occlude"
+    assert eng.line_of_sight(5, 5, 35, 5), "ray clearing pillar stays visible"
+    assert not eng.line_of_sight(8, 8, 32, 32), "diagonal through pillar occludes"
+    # integer grid stepping => zero floating-point drift => exactly symmetric
+    for (a, b) in [((5, 20), (35, 20)), ((8, 8), (32, 32)), ((5, 5), (33, 31))]:
+        assert eng.line_of_sight(*a, *b) == eng.line_of_sight(*b, *a), \
+            "LoS not direction-symmetric -> float drift"
+
+    # A* must route a policy target straight through the pillar around it,
+    # never clipping into solid geometry, never getting stuck.
+    slot = int(np.where(np.asarray(eng.types()) == E.FOX)[0][0])
+    eng.set_position(slot, 5.0, 20.0)
+    acts = RAND.copy()
+    acts[slot] = (30.0, 0.0)  # aim due east straight through the pillar
+    for _ in range(200):
+        eng.step(acts, True)
+        x, y = np.asarray(eng.xs())[slot], np.asarray(eng.ys())[slot]
+        assert not eng.is_obstacle(int(x / 2.0), int(y / 2.0)), "clipped into pillar"
+    x = float(np.asarray(eng.xs())[slot])
+    assert x > 25.0, f"A* failed to round the pillar (stuck at x={x:.1f})"
+    print(f"  [OK] LoS occlusion + A* rounds pillar to x={x:.1f} without clipping")
+
+
+def _cluster_density(n):
+    eng = E.EcoEngine(world=40.0, cell_size=4.0, vision=12.0,
+                      n_rabbits0=n, n_foxes0=0, n_grass0=0, grass_max=0,
+                      grass_spawn_rate=0.0, seed=13)
+    rabbits = np.where(np.asarray(eng.types()) == E.RABBIT)[0]
+    for slot in rabbits:
+        eng.set_position(int(slot), 20.0, 20.0)
+    eng.build_agent_obs()
+    row = np.asarray(eng.agent_obs())[0]
+    return row[E.LOCAL_DIM:]
+
+
+def test_density_channel_counts_beyond_top_n():
+    small = _cluster_density(5)
+    dense = _cluster_density(20)
+    assert small.shape == dense.shape == (E.DENSITY_DIM,)
+    assert np.isclose(small.max(), np.log10(5.0), atol=1e-6)
+    assert np.isclose(dense.max(), np.log10(20.0), atol=1e-6)
+    assert dense.max() > small.max()
+    print("  [OK] fixed 24-slot density channel distinguishes 5 vs 20 clustered rabbits")
+
+
+def test_astar_budget():
+    eng = E.EcoEngine(world=100.0, cell_size=4.0, vision=12.0,
+                      eat_radius=0.1, rabbit_metab=0.0, fox_metab=0.0,
+                      rabbit_move_cost=0.0, repro_threshold=1e9, init_energy=10.0,
+                      n_rabbits0=200, n_foxes0=0, n_grass0=0, grass_max=0,
+                      grass_spawn_rate=0.0, seed=17)
+    actions = np.full((E.MAX_TOTAL_ENTITIES, 2), np.nan, dtype=np.float32)
+    slots = np.where(np.asarray(eng.types()) == E.RABBIT)[0]
+    actions[slots] = (12.0, 12.0)
+    for _ in range(20):
+        eng.step(actions, True)
+    t0 = time.perf_counter()
+    frames = 1000
+    for _ in range(frames):
+        eng.step(actions, True)
+    ms = (time.perf_counter() - t0) * 1000.0 / frames
+    assert eng.path_queries() == 200
+    assert eng.path_expansions() <= 200 * E.ASTAR_MAX_EXPANSIONS
+    assert ms <= 0.5, f"A* frame overhead {ms:.3f}ms exceeds 0.5ms target"
+    print(f"  [OK] bounded A*: 200 concurrent queries in {ms:.3f} ms/frame")
+
+
+def test_density_builder_budget():
+    eng = E.EcoEngine(world=100.0, cell_size=8.0, vision=12.0,
+                      n_rabbits0=200, n_foxes0=0, n_grass0=0, grass_max=0,
+                      grass_spawn_rate=0.0, seed=19)
+    for _ in range(20):
+        eng.build_agent_obs()
+    t0 = time.perf_counter()
+    frames = 1000
+    for _ in range(frames):
+        eng.build_agent_obs()
+    ms = (time.perf_counter() - t0) * 1000.0 / frames
+    assert ms <= 0.5, f"density observation builder {ms:.3f}ms exceeds 0.5ms target"
+    assert np.asarray(eng.agent_obs()).shape == (200, E.AOBS)
+    print(f"  [OK] local+density observation builder: {ms:.3f} ms/frame @ 200 agents")
+
+
 def bench(use_grid, warm=200, n=100_000):
     eng = E.EcoEngine(use_grid=use_grid, **BENCH)
     for _ in range(warm): eng.step(RAND, False)
@@ -118,6 +257,12 @@ if __name__ == "__main__":
     test_grid_correctness()
     test_mechanics()
     test_capacity_graceful()
+    test_refuge_capacity_reserved()
+    test_astar_targets_and_fallback()
+    test_los_and_pillars()
+    test_density_channel_counts_beyond_top_n()
+    test_astar_budget()
+    test_density_builder_budget()
     sps_g, sps_n, act = test_throughput()
     drift = test_memory_drift()
     print(f"\nRESULT: grid-correctness PASS | "
