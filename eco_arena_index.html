@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WoW 3v3 Arena - 3D Observer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; overflow: hidden; background: #0a0d14; color: #e6edf3;
+         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #world { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .panel { background: rgba(10, 13, 20, .82); border: 1px solid rgba(150, 170, 210, .22);
+           border-radius: 8px; box-shadow: 0 5px 18px rgba(0, 0, 0, .3);
+           backdrop-filter: blur(5px); }
+  #title { position: fixed; top: 14px; left: 14px; padding: 11px 14px; }
+  h1 { margin: 0; color: #eaf0f8; font-size: 15px; font-weight: 650; }
+  .dim { color: #93a0b4; margin-top: 5px; font-size: 11px; line-height: 1.55; }
+  #hud { position: fixed; top: 14px; right: 14px; min-width: 190px; padding: 11px 14px;
+         font-size: 12px; line-height: 1.7; }
+  .teamA { color: #5fa8ff; } .teamB { color: #ff6b6b; }
+  .k { color: #93a0b4; }
+  #roster { position: fixed; left: 14px; bottom: 14px; padding: 10px 12px;
+            font-size: 11px; line-height: 1.6; min-width: 240px; }
+  #roster .row { display: flex; justify-content: space-between; gap: 12px; }
+  .hpbar { display: inline-block; width: 64px; height: 7px; border-radius: 2px;
+           background: #2a3344; vertical-align: middle; overflow: hidden; }
+  .hpfill { display: block; height: 100%; background: #5ad06a; }
+  .dead { opacity: .35; text-decoration: line-through; }
+  .cc { color: #f2c14e; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="world"></canvas>
+<div id="title" class="panel">
+  <h1>WoW 3v3 Arena - 3D Observer</h1>
+  <div class="dim"><span class="teamA">Team A</span> vs <span class="teamB">Team B</span>
+    &middot; 2 DPS + 1 healer/side &middot; 4 pillars (line-of-sight)<br>
+    drag to orbit &middot; scroll to zoom &middot; <b>+/-</b> replay speed</div>
+</div>
+<div id="hud" class="panel"></div>
+<div id="roster" class="panel"></div>
+<script type="module" src="./eco_arena_viewer.js"></script>
+</body>
+</html>

@@ -151,6 +151,7 @@ mode the panel shows state only, with a note that no policy is loaded.
 | `eco_arena.py` | arena action-head masking + Task 4 action-mask alignment guardrail (`assert_mask_lock`) |
 | `eco_arena_policy.py` | multi-head masked arena policy (perm-inv trunk + move/spell/target heads + critic) |
 | `eco_arena_train.py` | Task 3 curriculum manager — Stage 1 target-dummy training + cross-stage checkpoint reload |
+| `eco_arena_server.py` / `eco_arena_index.html` / `eco_arena_viewer.js` | live Three.js arena viewer (scripted / random / trained policy); orbit camera, hp bars, CC-status rings |
 | `test_arena.py` | arena acceptance harness — CC masking, diminishing returns, mask-lock guardrail, 3v3 CC-chain metric, curriculum |
 
 ### WoW-arena branch (`threejs-eco-rendering`)
@@ -174,6 +175,33 @@ Layered on the ecosystem engine without disturbing its hot path:
 - **Task 3/4 harness** — `eco_arena_env.py` measures coordinated CC-chain success;
   scripted burst+peel reaches ~60% vs ~22% random, validating the metric for
   trained policies.
+
+#### Build, test, retrain & watch the arena
+
+```bash
+bash build_eco.sh                       # (re)build the C++ engine (.so)
+python3 test_arena.py                   # arena acceptance suite (Tasks 1-4)
+
+# --- watch it live in the browser ---
+python3 eco_arena_server.py --hz 12                 # scripted burst+peel (default)
+python3 eco_arena_server.py --hz 12 --mode random   # uncoordinated baseline
+# trained self-play (needs a checkpoint, see below):
+python3 eco_arena_server.py --hz 12 --mode policy --ckpt experiments/arena_stage3.pt
+```
+
+Then open **http://localhost:8000/eco_arena_index.html** — drag to orbit, scroll to
+zoom, `+/-` to change replay speed. Blue = Team A, red = Team B, green cone = healer;
+bars are HP, a gold ring marks a crowd-controlled agent.
+
+```bash
+# --- retrain the policy ---
+python3 eco_arena_train.py              # Stage 1 (target dummy) -> experiments/arena_stage1_dummy.pt
+```
+
+The curriculum `Stage 1` trainer is wired and validated (damage efficiency climbs,
+checkpoint reload preserves structure). `--mode policy` loads `arena_stage3.pt` when
+present; full Stage 2/3 self-play training to a learned ≥60% CC-chain rate is the
+remaining work (the env, policy, masking and metric it needs are all in place).
 
 ## Status / measured results
 
