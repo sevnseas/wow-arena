@@ -14,10 +14,10 @@ die. The 4-task roadmap is in `goal.md`.
 
 | Task | what | status |
 |------|------|--------|
-| 1. C++ spatial-grid ecosystem engine | fixed 1024-slot entity pool, free-list recycling, counting-sort spatial hash grid, metabolism / eating / binary-fission reproduction / death | ✅ |
-| 2. Permutation-invariant trunk | DeepSets self-state + shared per-entity MLP + masked max-pool; order-invariant policy | ✅ |
-| 3. Shared-policy MARL | two weight spaces (Fox / Rabbit), variable active agents per frame, ID-synced action routing | ✅ |
-| 4. Ecological oscillation | tuned config → sustained Lotka–Volterra waves, never extinct | ✅ |
+| 1. Target-based C++ pathfinding | fixed 1024-slot pool, bounded A*, native obstacle rejection, greedy fallback | ✅ |
+| 2. Multi-scale perception | DeepSets local entities plus 24-slot egocentric density rings | ✅ |
+| 3. Tactical MARL rewards | normalized rabbit cohesion and fox assist shaping, clipped PPO + GAE | ✅ |
+| 4. Emergent tactics validation | herding screen passes; predator phase-lock tuning remains | partial |
 
 See [Status / measured results](#status--measured-results) for numbers.
 
@@ -26,48 +26,51 @@ See [Status / measured results](#status--measured-results) for numbers.
 ```
             ┌──────────────────────────── eco_engine.cpp (C++) ───────────────────────────┐
             │  fixed pool[1024]  SoA: type,x,y,energy,age     dense active-list (no scans) │
-            │  counting-sort spatial hash grid  → O(1) neighbour queries                   │
+            │  counting-sort spatial hash grid  → O(1) neighbours · bounded A* wall routing│
             │  metabolism · eat (grid) · binary fission · death (free-list) · grass regrow │
             │  refuge source-population (anti-extinction guardrail)                        │
             └───────────────┬───────────────────────────────────┬──────────────────────────┘
                             │ build_agent_obs()                  │ step(actions[1024], use_actions)
                             ▼                                    ▲
-        per-agent obs[n,100] + slots + types          per-slot int8 actions (0..7)
+        per-agent obs[n,124] + slots + types         per-slot float targets (dx, dy)
                             │                                    │
             ┌───────────────▼─────── eco_marl.py ────────────────┴──────────────┐
             │  route obs by type → Fox_Policy θ_fox / Rabbit_Policy θ_rabbit     │
             │  assert no cross-contamination · PPO update on BOTH heads          │
             └───────────────┬───────────────────────────────────────────────────┘
                             ▼  eco_policy.py
-            EcoPolicy = PermInvTrunk(self + masked max-pool over entities) → actor(8) + critic
+            EcoPolicy = PermInvTrunk(self + local max-pool + density rings) → actor(81) + critic
 ```
 
 ### Observation (per living agent) — `eco_policy.py`, mirrored in `eco_engine.cpp`
 
-`OBS_DIM = SELF_DIM(4) + MAX_VIS(16) × ENT_DIM(6) = 100`, all `float32`:
+`OBS_DIM = SELF_DIM(4) + MAX_VIS(16) × ENT_DIM(6) + DENSITY_DIM(24) = 124`,
+all `float32`:
 
 ```
 self  [0..3]   x, y (∈[-1,1]),  energy/repro_threshold (∈[0,1]),  is_fox
 ent×16[4..99]  per visible neighbour (nearest 16 within vision radius):
                  active, rel_dx/vision, rel_dy/vision, is_rabbit, is_fox, is_grass
+density[100..123] log10(count + 1) in 8 directions × 3 distance bands
 ```
 
 Inactive entity slots are zeroed. Because the trunk **max-pools** over the entity
 axis, slot *order* and *padding* are irrelevant — this is what makes the policy
 robust to entities dying / reproducing / warping array positions.
 
-### Action — `Discrete(8)`
+### Action — `Discrete(81)` target lattice
 
-One of 8 compass directions; the agent always steps `move_speed` that way
-(reflective arena boundaries). Foxes and rabbits run the *same architecture* with
-*independent weights*.
+One of 81 egocentric target offsets on a 9×9 lattice. The C++ engine resolves the
+low-level movement with A* capped at 32 expansions. Blocked or over-budget targets
+fall back immediately to a greedy vector without entering wall cells.
 
-### Reward (minimal; `eco_marl.py::collect`)
+### Reward (`eco_marl.py::collect`)
 
-Per-agent, derived from the engine each tick: `energy gained this step`
-(foxes from eating rabbits, rabbits from grass), `+0.01` rabbit survival bonus,
-`−1` on death. Tuning the *ecology* (config `ECO` in `eco_oscillation.py`) does
-most of the work; see caveats.
+Per-agent reward includes energy delta and `−10` on death. Threatened rabbits get
+a signed normalized proximity reward in `[-0.005, +0.005]`; foxes get bounded
+close-prey and pack-pressure shaping plus normalized coordinated-kill
+amplification. `eco_marl.py` optimizes identity-safe trajectories with clipped
+PPO, value clipping, entropy regularization, and GAE.
 
 ## Quickstart
 
@@ -75,22 +78,25 @@ most of the work; see caveats.
 bash build_eco.sh                 # build eco_engine (.so);  or see build.sh flags
 
 # 1. validate the engine (grid==naive, 0% memory drift, graceful cap)
-python test_eco.py
+python3 test_eco.py
 
 # 2. validate the perm-invariant trunk (order-invariance to 1e-5) + MARL plumbing
-python test_policy.py
-python test_marl.py
+python3 test_policy.py
+python3 test_marl.py
 
 # 3. show sustained Lotka–Volterra oscillation (200k frames, ASCII population plot)
-python eco_oscillation.py
+python3 eco_oscillation.py
 
 # 4. train the shared policies once, then watch them live
-python train_eco.py --iters 200 --device cuda      # -> experiments/eco_policies.pt
-python eco_server.py --policy --hz 30 --device cuda # open http://localhost:8000/eco_index.html
+python3 train_eco.py --iters 1000 --device cuda --out experiments/eco_tactical.pt
+# continue tuning the same policy weights
+python3 train_eco.py --iters 500 --device cuda --resume --out experiments/eco_tactical.pt
+python3 eco_server.py --policy --ckpt experiments/eco_tactical.pt --hz 30 --device cuda
+python3 eco_tactics.py --checkpoint experiments/eco_tactical.pt --device cuda
 ```
 
-> The repo ships a prebuilt `eco_engine*.so` and a trained
-> `experiments/eco_policies.pt`, so you can skip straight to step 4.
+> The older `experiments/eco_policies.pt` checkpoint predates target actions.
+> Train `experiments/eco_tactical.pt` before evaluating coordinated behavior.
 
 ## Live viewer
 
@@ -103,8 +109,8 @@ authoritative; `wow-arena` contributes graphics only. A scrolling population
 graph shows foxes **lagging** rabbits.
 
 ```bash
-python eco_server.py --hz 30                        # random-walk agents (instant, no training)
-python eco_server.py --policy --hz 30 --device cuda # pretrained shared policies
+python3 eco_server.py --hz 30                        # random-walk agents (instant, no training)
+python3 eco_server.py --policy --hz 30 --device cuda # trained target policies
 ```
 
 Then open **http://localhost:8000/eco_index.html**.
@@ -123,10 +129,8 @@ Then open **http://localhost:8000/eco_index.html**.
 
 The selection panel (`Sim.inspect` → WebSocket, bidirectional) shows, per click:
 
-- **state** — the exact observation the policy receives: self `(x, y, energy, is_fox)`
-  plus each visible neighbour sorted by distance (`kind, Δx, Δy, dist` in world units);
-- **action** — in `--policy` mode, the policy's per-direction **logits** and softmax
-  **probabilities** (bar chart), the **chosen action**, and the critic's **value `V(s)`**.
+- **state** — self state, nearest entities, and the density-ring peak;
+- **action** — the highest-probability coordinate targets, chosen target, and critic value.
 
 Grass reports as a passive energy node (no observation, no policy). In random-walk
 mode the panel shows state only, with a note that no policy is loaded.
@@ -135,22 +139,44 @@ mode the panel shows state only, with a note that no policy is loaded.
 
 | file | what |
 |------|------|
-| `eco_engine.cpp` / `build_eco.sh` | Task 1 — C++ ecosystem engine + pybind11 (spatial grid, fixed pool, metabolism, refuge) |
-| `eco_policy.py` | Task 2 — `PermInvTrunk` (DeepSets / masked max-pool) + `EcoPolicy` |
-| `eco_marl.py` | Task 3 — `MARLRunner`: two shared policies, type-routed actions, ID-sync guard, PPO update, `save`/`load` |
-| `eco_oscillation.py` | Task 4 — long-horizon validator + tuned config `ECO` |
-| `train_eco.py` | train both policies once → `experiments/eco_policies.pt` |
+| `eco_engine.cpp` / `build_eco.sh` | Task 1–2 — fixed pool, spatial grid, bounded A*, density observations |
+| `eco_policy.py` | Task 2 — local DeepSets encoder plus density channel and target lattice |
+| `eco_marl.py` | Task 3 — type-routed targets, normalized group rewards, clipped PPO + GAE |
+| `eco_oscillation.py` | structural long-horizon oscillation validator + tuned config `ECO` |
+| `eco_tactics.py` | compare trained coordination metrics against random walk |
+| `train_eco.py` | train both policies once → `experiments/eco_tactical.pt` |
 | `eco_server.py` / `eco_index.html` / `eco_viewer.js` | live Three.js WebSocket viewer (random-walk or pretrained); fly camera, crosshair inspection, `+/−` replay speed |
 | `test_eco.py` / `test_policy.py` / `test_marl.py` | acceptance harnesses for Tasks 1–3 |
+| `eco_arena_env.py` | WoW-arena branch — 3v3 two-team arena (4 pillars, combat layer) + coordinated CC-chain metric and reference tactics |
+| `eco_arena.py` | arena action-head masking + Task 4 action-mask alignment guardrail (`assert_mask_lock`) |
+| `test_arena.py` | arena acceptance harness — CC masking, diminishing returns, mask-lock guardrail, 3v3 CC-chain metric |
+
+### WoW-arena branch (`threejs-eco-rendering`)
+
+Layered on the ecosystem engine without disturbing its hot path:
+
+- **Task 1** — `eco_engine.cpp::line_of_sight` (drift-free integer-grid DDA) and
+  `add_pillar` give arena line-of-sight occlusion + 4 static circular pillars; the
+  existing bounded A* already routes around them.
+- **Task 2** — additive combat state machine: per-agent hp/mana, `NSPELL`
+  cooldowns, `cc_timer`/status enum (IDLE/STUNNED/POLYMORPHED), per-category
+  Diminishing Returns (full/half/quarter/immune). `cast_spell` enforces
+  alive/not-CC'd/off-cooldown/mana + line-of-sight; `build_action_mask` hard-locks
+  movement + non-idle spells for a CC'd or dead agent.
+- **Task 4 guardrail** — `eco_arena.assert_mask_lock` is the strict runtime check
+  that mask and combat state never drift under target swaps / deaths.
+- **Task 3/4 harness** — `eco_arena_env.py` measures coordinated CC-chain success;
+  scripted burst+peel reaches ~60% vs ~22% random, validating the metric for
+  trained policies.
 
 ## Status / measured results
 
 | Task | result |
 |------|--------|
-| 1. engine | grid step **bit-identical** to brute-force O(N²); **0.000 % RSS drift over 5M churn steps**; graceful cap (never overflows 1024); grid speedup over naive grows with density |
-| 2. trunk | permutation invariance **exact (0.00e+00**, target ≤1e-5), incl. closest/furthest swap; padding ignored; GPU inference **1.3–2.5 ms** (≤3.5 ms budget) |
-| 3. MARL | variable agent counts handled; gradients reach **both** heads; cross-contamination guard verified (+ negative control fires on deliberate mislabel) |
-| 4. oscillation | **200,000 frames, never 0-population**; foxes lag rabbits (xcorr +, corr 0.71) = Lotka–Volterra |
+| 1. engine | 200 concurrent bounded-A* queries **0.031 ms/frame**; grid step bit-identical; refuge slots reserved under cap pressure |
+| 2. perception | local permutation invariance exact; 24 density slots distinguish clustered populations beyond the nearest-16 cap |
+| 3. MARL | both heads update; target routing, reward bounds, and 50-agent simultaneous terminal GAE verified |
+| 4. tactics | 5k-frame screen: trained rabbit threat-state spacing **−40.6%** vs random (herding target met); phase correlation **0.15** (required ≥0.65, still failing) |
 
 ## Caveats (and how to push past them)
 
@@ -176,14 +202,15 @@ These are honest limitations of the current state, each with a concrete pointer.
   in this repo's history). The tuned numbers live in `ECO` in
   `eco_oscillation.py` (config "E").
 
-- **The pretrained policies are lightly trained.** `experiments/eco_policies.pt`
-  is 200 iterations of a *PPO-lite* update (`eco_marl.py::update`: single-step
-  return `r + γ·V`, no GAE, no clip ratio, no entropy term) on a minimal reward.
-  They reach a balanced ~100 fox / ~96 rabbit state but don't look dramatically
-  smarter than random-walk in the viewer. To get visibly better hunting:
-  `python train_eco.py --iters 1000 --device cuda`, and/or upgrade `update()` to
-  full clipped PPO + GAE and add reward shaping (e.g. distance-to-prey) in
-  `collect()`.
+- **Trained phase lock is not complete.** The target policy now clusters rabbits
+  under threat, but fox kills remain too sparse to preserve the structural wave
+  correlation. `python3 eco_tactics.py --checkpoint experiments/eco_tactical.pt
+  --device cuda` prints the trained-versus-random screen. Continue tuning fox
+  pursuit and pack rewards before claiming autonomous tactical validation.
+
+- **The shipped checkpoint predates the target-action policy.** Loading it keeps
+  compatible layers, but the new density and coordinate heads need a fresh run:
+  `python3 train_eco.py --iters 1000 --device cuda`.
 
 - **MARL uses a custom loop, not PufferLib's native multi-agent vectorizer.**
   Task 3 demonstrates the *shared-policy mechanics* the spec asks for (two weight
