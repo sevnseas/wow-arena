@@ -106,6 +106,25 @@ python eco_server.py --policy --hz 30 --device cuda # pretrained shared policies
 
 Then open **http://localhost:8000/eco_index.html**.
 
+### Viewer controls
+
+| input | effect |
+|-------|--------|
+| **click** an entity | select it; a gold ring marks it and the side panel shows its live **state → action** trace |
+| **scroll wheel** | zoom 1×–20× toward the cursor (markers/ring stay constant size) |
+| **`0`** | reset zoom/pan to full view |
+| **`+` / `−`** | replay speed 0.1×–8× (browser sends `{speed}`, server scales its tick interval) |
+
+The selection panel (`Sim.inspect` → WebSocket, bidirectional) shows, per click:
+
+- **state** — the exact observation the policy receives: self `(x, y, energy, is_fox)`
+  plus each visible neighbour sorted by distance (`kind, Δx, Δy, dist` in world units);
+- **action** — in `--policy` mode, the policy's per-direction **logits** and softmax
+  **probabilities** (bar chart), the **chosen action**, and the critic's **value `V(s)`**.
+
+Grass reports as a passive energy node (no observation, no policy). In random-walk
+mode the panel shows state only, with a note that no policy is loaded.
+
 ## Files
 
 | file | what |
@@ -115,7 +134,7 @@ Then open **http://localhost:8000/eco_index.html**.
 | `eco_marl.py` | Task 3 — `MARLRunner`: two shared policies, type-routed actions, ID-sync guard, PPO update, `save`/`load` |
 | `eco_oscillation.py` | Task 4 — long-horizon validator + tuned config `ECO` |
 | `train_eco.py` | train both policies once → `experiments/eco_policies.pt` |
-| `eco_server.py` / `eco_index.html` | live WebSocket viewer (random-walk or pretrained) |
+| `eco_server.py` / `eco_index.html` | live WebSocket viewer (random-walk or pretrained); click-to-inspect entity state/action, scroll-zoom, `+/−` replay speed |
 | `test_eco.py` / `test_policy.py` / `test_marl.py` | acceptance harnesses for Tasks 1–3 |
 
 ## Status / measured results
