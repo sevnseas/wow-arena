@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Wolf–Rabbit Arena</title>
+<style>
+  body { background:#11131a; color:#cdd; font-family:system-ui,sans-serif;
+         display:flex; flex-direction:column; align-items:center; gap:10px; }
+  canvas { background:#1b2030; border:1px solid #333; border-radius:6px; }
+  #hud { font-variant-numeric:tabular-nums; }
+  .ok { color:#6f6; } .bad { color:#f66; }
+</style>
+</head>
+<body>
+  <h2>Wolf–Rabbit Arena <span style="font-size:13px;opacity:.6">PufferLib RL playback</span></h2>
+  <canvas id="c" width="560" height="560"></canvas>
+  <div id="hud">connecting…</div>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+const W = cv.width, Hpx = cv.height;
+let last = null;
+
+function world2px(x, y, h) {
+  // world [-h,h] -> canvas, y up
+  const px = (x + h) / (2*h) * W;
+  const py = Hpx - (y + h) / (2*h) * Hpx;
+  return [px, py];
+}
+function draw(s) {
+  ctx.clearRect(0,0,W,Hpx);
+  // arena border
+  ctx.strokeStyle = '#445'; ctx.strokeRect(1,1,W-2,Hpx-2);
+  // rabbits
+  ctx.fillStyle = '#7ec8e3';
+  for (const r of s.rabbits) {
+    const [px,py] = world2px(r[0], r[1], s.h);
+    ctx.beginPath(); ctx.arc(px,py,6,0,7); ctx.fill();
+  }
+  // wolf
+  const [wx,wy] = world2px(s.wolf[0], s.wolf[1], s.h);
+  ctx.fillStyle = '#e8743b';
+  ctx.beginPath(); ctx.arc(wx,wy,9,0,7); ctx.fill();
+  ctx.strokeStyle='#fff'; ctx.stroke();
+
+  const cls = s.frame_ms <= 5 ? 'ok' : 'bad';
+  hud.innerHTML = `arena ${(2*s.h).toFixed(0)}×${(2*s.h).toFixed(0)} &nbsp; ` +
+    `eaten: <b>${s.eaten}</b> &nbsp; rabbits: ${s.rabbits.length} &nbsp; ` +
+    `frame: <span class="${cls}">${s.frame_ms.toFixed(2)} ms</span>`;
+}
+function connect() {
+  const ws = new WebSocket(`ws://${location.hostname}:8001/`);
+  ws.onmessage = e => { last = JSON.parse(e.data); draw(last); };
+  ws.onclose = () => { hud.textContent = 'disconnected — retrying…'; setTimeout(connect, 1000); };
+  ws.onerror = () => ws.close();
+}
+connect();
+</script>
+</body>
+</html>

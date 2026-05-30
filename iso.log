@@ -1,0 +1,18 @@
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0 🐡             CPU: 0.0%  GPU: 0.0%  DRAM: 0.0%   VRAM: 0.0%  │
+│                                                                              │
+│  Summary          Value    Evaluate      0s   0%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      0s   0%                             │
+│  Params            4.9K      Env         0s   0%                             │
+│  Steps                0      Copy        0s   0%                             │
+│  SPS                  0      Misc        0s   0%                             │
+│  Epoch                0    Train         0s   0%                             │
+│  Uptime              0s      Forwa…      0s   0%                             │
+│  Remaini…   A hair past      Learn       0s   0%                             │
+│               a freckle      Copy        0s   0%                             │
+│                              Misc        0s   0%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+trainer ok

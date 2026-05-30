@@ -1,0 +1,28 @@
+/home/kmang/.local/lib/python3.12/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ in <module>:11                                                               │
+│                                                                              │
+│ /home/kmang/.local/lib/python3.12/site-packages/torch/distributed/elastic/mu │
+│ ltiprocessing/errors/__init__.py:367 in wrapper                              │
+│                                                                              │
+│   364 │   │   │   │   raise AssertionError  # assertion for mypy type checke │
+│   365 │   │   │   error_handler.initialize()                                 │
+│   366 │   │   │   try:                                                       │
+│ ❱ 367 │   │   │   │   return f(*args, **kwargs)                              │
+│   368 │   │   │   except SystemExit as se:                                   │
+│   369 │   │   │   │   # For run_path based entrypoints, SystemExit with code │
+│   370 │   │   │   │   # Handling it here by returning a value:               │
+│                                                                              │
+│ /home/kmang/.local/lib/python3.12/site-packages/pufferlib/pufferl.py:324 in  │
+│ train                                                                        │
+│                                                                              │
+│    321 │   │   a = config['prio_alpha']                                      │
+│    322 │   │   clip_coef = config['clip_coef']                               │
+│    323 │   │   vf_clip = config['vf_clip_coef']                              │
+│ ❱  324 │   │   anneal_beta = b0 + (1 - b0)*a*self.epoch/self.total_epochs    │
+│    325 │   │   self.ratio[:] = 1                                             │
+│    326 │   │                                                                 │
+│    327 │   │   for mb in range(self.total_minibatches):                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ZeroDivisionError: float division by zero

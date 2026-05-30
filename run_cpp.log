@@ -1,0 +1,339 @@
+/home/kmang/.local/lib/python3.12/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0 🐡             CPU: 0.0%  GPU: 0.0%  DRAM: 0.0%   VRAM: 0.0%  │
+│                                                                              │
+│  Summary          Value    Evaluate      0s   0%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      0s   0%                             │
+│  Params            5.9K      Env         0s   0%                             │
+│  Steps                0      Copy        0s   0%                             │
+│  SPS                  0      Misc        0s   0%                             │
+│  Epoch                0    Train         0s   0%                             │
+│  Uptime              0s      Forwa…      0s   0%                             │
+│  Remaini…   A hair past      Learn       0s   0%                             │
+│               a freckle      Copy        0s   0%                             │
+│                              Misc        0s   0%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0          🐡      CPU:     GPU: 2.7%  DRAM: 3.0%   VRAM: 5.1%  │
+│                                110.0%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s   0%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s   0%    policy_loss       0.015  │
+│  Params            5.9K      Env         0s   0%    value_loss        0.022  │
+│  Steps            65.5K      Copy        0s   0%    entropy           2.714  │
+│  SPS              32.6K      Misc        0s   0%    old_approx_kl     0.004  │
+│  Epoch                1    Train         0s   0%    approx_kl         0.005  │
+│  Uptime              2s      Forwa…      0s   0%    clipfrac          0.043  │
+│  Remaini…           59s      Learn       0s   0%    importance        1.001  │
+│                              Copy        0s   0%    explained_var…    0.170  │
+│                              Misc        0s   0%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0         🐡       CPU:     GPU: 3.8%  DRAM: 3.4%   VRAM: 5.9%  │
+│                                163.3%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  57%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  55%    policy_loss       0.019  │
+│  Params            5.9K      Env         0s   0%    value_loss        0.025  │
+│  Steps           196.6K      Copy        0s   1%    entropy           2.695  │
+│  SPS             442.0K      Misc        0s   0%    old_approx_kl     0.004  │
+│  Epoch                3    Train         0s  42%    approx_kl         0.008  │
+│  Uptime              2s      Forwa…      0s   0%    clipfrac          0.125  │
+│  Remaini…            4s      Learn       0s   1%    importance        1.004  │
+│                              Copy        0s  11%    explained_var…    0.153  │
+│                              Misc        0s   5%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0        🐡        CPU:     GPU: 3.8%  DRAM: 3.4%   VRAM: 5.9%  │
+│                                163.3%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  57%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  55%    policy_loss       0.036  │
+│  Params            5.9K      Env         0s   0%    value_loss        0.032  │
+│  Steps           327.7K      Copy        0s   1%    entropy           2.608  │
+│  SPS             442.7K      Misc        0s   0%    old_approx_kl     0.007  │
+│  Epoch                5    Train         0s  42%    approx_kl         0.009  │
+│  Uptime              2s      Forwa…      0s   0%    clipfrac          0.138  │
+│  Remaini…            3s      Learn       0s   1%    importance        1.002  │
+│                              Copy        0s  11%    explained_var…    0.109  │
+│                              Misc        0s   5%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0       🐡         CPU:     GPU: 3.8%  DRAM: 3.4%   VRAM: 5.9%  │
+│                                163.3%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  57%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  55%    policy_loss       0.056  │
+│  Params            5.9K      Env         0s   0%    value_loss        0.048  │
+│  Steps           458.8K      Copy        0s   1%    entropy           2.544  │
+│  SPS             382.0K      Misc        0s   0%    old_approx_kl     0.005  │
+│  Epoch                7    Train         0s  42%    approx_kl         0.007  │
+│  Uptime              2s      Forwa…      0s   0%    clipfrac          0.119  │
+│  Remaini…            4s      Learn       0s   1%    importance        1.003  │
+│                              Copy        0s  11%    explained_var…    0.101  │
+│                              Misc        0s   5%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0      🐡          CPU:     GPU: 6.2%  DRAM: 3.6%   VRAM: 6.3%  │
+│                                211.7%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  59%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  37%    policy_loss       0.097  │
+│  Params            5.9K      Env         0s   2%    value_loss        0.097  │
+│  Steps           589.8K      Copy        0s  18%    entropy           2.286  │
+│  SPS             403.5K      Misc        0s   0%    old_approx_kl     0.004  │
+│  Epoch                9    Train         0s  40%    approx_kl         0.008  │
+│  Uptime              3s      Forwa…      0s   3%    clipfrac          0.122  │
+│  Remaini…            3s      Learn       0s   9%    importance        1.004  │
+│                              Copy        0s   4%    explained_var…    0.427  │
+│                              Misc        0s  12%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0     🐡           CPU:     GPU: 6.2%  DRAM: 3.6%   VRAM: 6.3%  │
+│                                211.7%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  59%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  37%    policy_loss       0.103  │
+│  Params            5.9K      Env         0s   2%    value_loss        0.168  │
+│  Steps           720.9K      Copy        0s  18%    entropy           2.194  │
+│  SPS             382.2K      Misc        0s   0%    old_approx_kl     0.005  │
+│  Epoch               11    Train         1s  40%    approx_kl         0.008  │
+│  Uptime              3s      Forwa…      0s   3%    clipfrac          0.124  │
+│  Remaini…            3s      Learn       0s   9%    importance        1.003  │
+│                              Copy        0s   4%    explained_var…    0.236  │
+│                              Misc        0s  12%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0    🐡            CPU:     GPU: 6.2%  DRAM: 3.6%   VRAM: 6.3%  │
+│                                211.7%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  49%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  30%    policy_loss       0.092  │
+│  Params            5.9K      Env         0s   3%    value_loss        0.217  │
+│  Steps           852.0K      Copy        0s  16%    entropy           2.034  │
+│  SPS             391.0K      Misc        0s   0%    old_approx_kl     0.004  │
+│  Epoch               13    Train         1s  50%    approx_kl         0.005  │
+│  Uptime              3s      Forwa…      0s   5%    clipfrac          0.058  │
+│  Remaini…            2s      Learn       0s  11%    importance        1.001  │
+│                              Copy        0s   5%    explained_var…    0.170  │
+│                              Misc        0s  12%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0   🐡             CPU:     GPU: 7.3%  DRAM: 3.8%   VRAM: 6.6%  │
+│                                229.7%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  49%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  30%    policy_loss       0.074  │
+│  Params            5.9K      Env         0s   3%    value_loss        0.233  │
+│  Steps           983.0K      Copy        0s  16%    entropy           1.910  │
+│  SPS             334.7K      Misc        0s   0%    old_approx_kl     0.003  │
+│  Epoch               15    Train         1s  50%    approx_kl         0.005  │
+│  Uptime              4s      Forwa…      0s   5%    clipfrac          0.051  │
+│  Remaini…            3s      Learn       0s  11%    importance        1.001  │
+│                              Copy        0s   5%    explained_var…    0.026  │
+│                              Misc        0s  12%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0  🐡              CPU:     GPU: 7.3%  DRAM: 3.8%   VRAM: 6.6%  │
+│                                229.7%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  49%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  30%    policy_loss       0.076  │
+│  Params            5.9K      Env         0s   3%    value_loss        0.225  │
+│  Steps             1.1M      Copy        0s  16%    entropy           1.765  │
+│  SPS             442.5K      Misc        0s   0%    old_approx_kl     0.005  │
+│  Epoch               17    Train         1s  50%    approx_kl         0.005  │
+│  Uptime              4s      Forwa…      0s   5%    clipfrac          0.061  │
+│  Remaini…            2s      Learn       0s  11%    importance        1.001  │
+│                              Copy        0s   5%    explained_var…   -0.063  │
+│                              Misc        0s  12%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0 🐡               CPU:     GPU: 7.3%  DRAM: 3.8%   VRAM: 6.6%  │
+│                                229.7%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  46%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  24%    policy_loss       0.052  │
+│  Params            5.9K      Env         0s   3%    value_loss        0.292  │
+│  Steps             1.2M      Copy        0s  17%    entropy           1.757  │
+│  SPS             457.7K      Misc        0s   0%    old_approx_kl     0.003  │
+│  Epoch               19    Train         1s  53%    approx_kl         0.004  │
+│  Uptime              4s      Forwa…      0s   3%    clipfrac          0.038  │
+│  Remaini…            1s      Learn       0s  43%    importance        1.000  │
+│                              Copy        0s   2%    explained_var…   -0.164  │
+│                              Misc        0s  14%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0          🐡      CPU:     GPU: 8.7%  DRAM: 3.9%   VRAM: 6.9%  │
+│                                240.5%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  46%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  24%    policy_loss       0.040  │
+│  Params            5.9K      Env         0s   3%    value_loss        0.324  │
+│  Steps             1.4M      Copy        0s  17%    entropy           1.697  │
+│  SPS             460.1K      Misc        0s   0%    old_approx_kl     0.002  │
+│  Epoch               21    Train         1s  53%    approx_kl         0.002  │
+│  Uptime              5s      Forwa…      0s   3%    clipfrac          0.014  │
+│  Remaini…            1s      Learn       0s  43%    importance        1.000  │
+│                              Copy        0s   2%    explained_var…   -0.262  │
+│                              Misc        0s  14%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0         🐡       CPU:     GPU: 8.7%  DRAM: 3.9%   VRAM: 6.9%  │
+│                                240.5%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  48%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  23%    policy_loss       0.022  │
+│  Params            5.9K      Env         0s   4%    value_loss        0.368  │
+│  Steps             1.5M      Copy        0s  20%    entropy           1.665  │
+│  SPS             454.9K      Misc        0s   0%    old_approx_kl     0.001  │
+│  Epoch               23    Train         1s  51%    approx_kl         0.001  │
+│  Uptime              5s      Forwa…      0s   3%    clipfrac          0.002  │
+│  Remaini…            1s      Learn       0s  57%    importance        1.000  │
+│                              Copy        0s   2%    explained_var…   -0.303  │
+│                              Misc        0s  16%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0        🐡        CPU:     GPU: 8.7%  DRAM: 3.9%   VRAM: 6.9%  │
+│                                240.5%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  48%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  23%    policy_loss       0.010  │
+│  Params            5.9K      Env         0s   4%    value_loss        0.384  │
+│  Steps             1.6M      Copy        0s  20%    entropy           1.603  │
+│  SPS             452.5K      Misc        0s   0%    old_approx_kl     0.001  │
+│  Epoch               25    Train         1s  51%    approx_kl         0.001  │
+│  Uptime              5s      Forwa…      0s   3%    clipfrac          0.001  │
+│  Remaini…            0s      Learn       0s  57%    importance        1.000  │
+│                              Copy        0s   2%    explained_var…   -0.377  │
+│                              Misc        0s  16%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0       🐡         CPU:     GPU: 9.6%  DRAM: 4.0%   VRAM: 7.0%  │
+│                                251.5%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  48%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  23%    policy_loss       0.005  │
+│  Params            5.9K      Env         0s   4%    value_loss        0.437  │
+│  Steps             1.8M      Copy        0s  20%    entropy           1.634  │
+│  SPS             387.8K      Misc        0s   0%    old_approx_kl     0.001  │
+│  Epoch               27    Train         1s  51%    approx_kl         0.000  │
+│  Uptime              6s      Forwa…      0s   3%    clipfrac          0.000  │
+│  Remaini…            0s      Learn       0s  57%    importance        1.000  │
+│                              Copy        0s   2%    explained_var…   -0.438  │
+│                              Misc        0s  16%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0      🐡          CPU:     GPU: 9.6%  DRAM: 4.0%   VRAM: 7.0%  │
+│                                251.5%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  55%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  34%    policy_loss      -0.003  │
+│  Params            5.9K      Env         0s   3%    value_loss        0.455  │
+│  Steps             1.9M      Copy        0s  17%    entropy           1.629  │
+│  SPS             365.2K      Misc        0s   0%    old_approx_kl     0.000  │
+│  Epoch               29    Train         1s  44%    approx_kl         0.000  │
+│  Uptime              6s      Forwa…      0s   4%    clipfrac          0.000  │
+│  Remaini…            0s      Learn       0s  11%    importance        1.000  │
+│                              Copy        0s   4%    explained_var…   -0.412  │
+│                              Misc        0s  13%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0     🐡           CPU:     GPU: 9.6%  DRAM: 4.0%   VRAM: 7.0%  │
+│                                251.5%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  55%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  34%    policy_loss      -0.002  │
+│  Params            5.9K      Env         0s   3%    value_loss        0.450  │
+│  Steps             2.0M      Copy        0s  17%    entropy           1.630  │
+│  SPS             394.4K      Misc        0s   0%    old_approx_kl     0.000  │
+│  Epoch               31    Train         1s  44%    approx_kl         0.000  │
+│  Uptime              6s      Forwa…      0s   4%    clipfrac          0.000  │
+│  Remaini…            0s      Learn       0s  11%    importance        1.000  │
+│                              Copy        0s   4%    explained_var…   -0.383  │
+│                              Misc        0s  13%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 3.0    🐡            CPU:     GPU: 9.6%  DRAM: 4.0%   VRAM: 7.0%  │
+│                                251.5%                                        │
+│                                                                              │
+│  Summary          Value    Evaluate      1s  56%    Losses            Value  │
+│  Env        wolf_rabbit      Forwa…      1s  27%    policy_loss      -0.002  │
+│  Params            5.9K      Env         0s   3%    value_loss        0.450  │
+│  Steps             2.0M      Copy        0s  25%    entropy           1.630  │
+│  SPS                  0      Misc        0s   0%    old_approx_kl     0.000  │
+│  Epoch               31    Train         1s  43%    approx_kl         0.000  │
+│  Uptime              6s      Forwa…      0s   4%    clipfrac          0.000  │
+│  Remaini…   A hair past      Learn       0s  29%    importance        1.000  │
+│               a freckle      Copy        0s   3%    explained_var…   -0.383  │
+│                              Misc        0s  17%                             │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  eaten                         0.000    boundary_hits                 0.000  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+saved policy -> experiments/wolf_cpp.pt

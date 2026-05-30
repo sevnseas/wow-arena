@@ -1,0 +1,5 @@
+map 3.0x3.0  agents=1024  steps=256
+completed episodes: 1024
+  mean rabbits eaten/episode : 21.37
+  mean boundary hits/episode : 0.67
+in-flight eaten (this 256-step rollout): mean=0.00  max=0
