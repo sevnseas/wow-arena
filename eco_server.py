@@ -95,6 +95,7 @@ class Sim:
             self.eng = E.EcoEngine(use_grid=True, seed=int(time.time()) & 0xffff, **ECO)
         self.frame_ms = 0.0
         self.selected = None        # pool slot the browser asked to inspect
+        self.speed = 1.0            # replay-rate multiplier set from the browser
 
     def tick(self):
         t0 = time.perf_counter()
@@ -209,17 +210,23 @@ async def _receiver(websocket, sim):
             if "select" in data:
                 sel = data["select"]
                 sim.selected = int(sel) if sel is not None else None
+            if "speed" in data:
+                try:
+                    sim.speed = max(0.1, min(8.0, float(data["speed"])))
+                except (TypeError, ValueError):
+                    pass
     except websockets.ConnectionClosed:
         pass
 
 
 async def stream(websocket, sim, hz):
-    dt = 1.0 / hz
     next_t = time.perf_counter()
     recv_task = asyncio.create_task(_receiver(websocket, sim))
     try:
         while True:
             await websocket.send(json.dumps(sim.tick()))
+            # frame interval shrinks as the browser raises sim.speed
+            dt = 1.0 / (hz * sim.speed)
             next_t += dt
             sleep = next_t - time.perf_counter()
             if sleep > 0:

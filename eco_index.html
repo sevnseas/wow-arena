@@ -6,14 +6,19 @@
 <style>
   body { margin: 0; background: #0d1117; color: #c9d1d9;
          font-family: ui-monospace, Menlo, Consolas, monospace; }
-  #wrap { display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; }
+  /* align-items:flex-start stops flexbox from vertically stretching the
+     canvas to match a tall inspect panel (which distorted the map). */
+  #wrap { display: flex; gap: 16px; padding: 16px; flex-wrap: wrap;
+          align-items: flex-start; }
   canvas { background: #11161d; border: 1px solid #222; border-radius: 6px; }
   #hud { font-size: 14px; line-height: 1.7; }
   .fox { color: #ff6b6b; } .rab { color: #f0f0f0; } .grass { color: #5fd35f; }
   .k { color: #8b949e; }
   h1 { font-size: 16px; margin: 16px 16px 0; font-weight: 600; }
   .dim { color: #8b949e; font-size: 12px; margin: 2px 16px 0; }
-  #arena { cursor: crosshair; }
+  /* pin the display size so it always matches the 560x560 coordinate system */
+  #arena { cursor: crosshair; width: 560px; height: 560px; flex: 0 0 auto; }
+  #chart { width: 420px; height: 240px; }
   #inspect { margin-top: 12px; font-size: 12px; line-height: 1.5; width: 420px;
              background: #11161d; border: 1px solid #222; border-radius: 6px;
              padding: 10px 12px; box-sizing: border-box; }
@@ -32,7 +37,9 @@
 <h1>Lotka-Volterra Ecosystem</h1>
 <div class="dim">live <span class="grass">grass</span> ·
   <span class="rab">rabbits</span> · <span class="fox">foxes</span>
-  — predators lag prey · <b>click any entity to inspect its state &amp; action</b></div>
+  — predators lag prey · <b>click</b> an entity to inspect ·
+  <b>scroll</b> to zoom · <b>+ / −</b> speed · <b>0</b> reset view</div>
+<div class="dim" id="viewhud"></div>
 <div id="wrap">
   <canvas id="arena" width="560" height="560"></canvas>
   <div>
@@ -46,27 +53,41 @@ const arena = document.getElementById('arena'), ax = arena.getContext('2d');
 const chart = document.getElementById('chart'), cx = chart.getContext('2d');
 const hud = document.getElementById('hud');
 const inspectEl = document.getElementById('inspect');
+const viewhud = document.getElementById('viewhud');
 const histF = [], histR = [], histG = [], HMAX = 420;
 let selected = null, lastState = null, ws = null;
+
+// view transform: screen_px = world_px * zoom + offset
+const view = { zoom: 1, ox: 0, oy: 0 };
+let speed = 1.0;   // server tick-rate multiplier
+
+function updateViewHud() {
+  viewhud.textContent = `zoom ${view.zoom.toFixed(2)}×  ·  speed ${speed.toFixed(2)}×`;
+}
 
 function draw(s) {
   lastState = s;
   const W = arena.width, scale = W / s.world;
+  ax.setTransform(1, 0, 0, 1, 0, 0);   // reset before clearing
   ax.clearRect(0, 0, W, W);
+  // apply pan/zoom: everything below is drawn in world-scaled coords
+  ax.setTransform(view.zoom, 0, 0, view.zoom, view.ox, view.oy);
+  const r = 1 / view.zoom;             // keep marker sizes constant on screen
   let selPx = null;
   for (let i = 0; i < s.t.length; i++) {
     const px = s.x[i] * scale, py = s.y[i] * scale, t = s.t[i];
-    if (t === 1) { ax.fillStyle = '#2f8f2f'; ax.fillRect(px-1, py-1, 2, 2); }
+    if (t === 1) { ax.fillStyle = '#2f8f2f'; ax.fillRect(px-r, py-r, 2*r, 2*r); }
     else if (t === 2) { ax.fillStyle = '#f0f0f0'; ax.beginPath();
-      ax.arc(px, py, 2.2, 0, 7); ax.fill(); }
+      ax.arc(px, py, 2.2*r, 0, 7); ax.fill(); }
     else { ax.fillStyle = '#ff5b5b'; ax.beginPath();
-      ax.arc(px, py, 3.2, 0, 7); ax.fill(); }
+      ax.arc(px, py, 3.2*r, 0, 7); ax.fill(); }
     if (s.slot && s.slot[i] === selected) selPx = [px, py];
   }
   if (selPx) {  // highlight ring around the inspected entity
-    ax.strokeStyle = '#f0b429'; ax.lineWidth = 2; ax.beginPath();
-    ax.arc(selPx[0], selPx[1], 7, 0, 7); ax.stroke();
+    ax.strokeStyle = '#f0b429'; ax.lineWidth = 2 * r; ax.beginPath();
+    ax.arc(selPx[0], selPx[1], 7 * r, 0, 7); ax.stroke();
   }
+  ax.setTransform(1, 0, 0, 1, 0, 0);
   if (s.inspect) renderInspect(s.inspect);
   hud.innerHTML =
     `<span class="k">step</span>   ${s.step}<br>` +
@@ -152,29 +173,75 @@ function renderInspect(d) {
   inspectEl.innerHTML = h;
 }
 
+// canvas pixel (accounting for CSS scaling) under a mouse event
+function canvasPx(ev) {
+  const r = arena.getBoundingClientRect();
+  return [(ev.clientX - r.left) * arena.width / r.width,
+          (ev.clientY - r.top) * arena.height / r.height];
+}
+
 arena.addEventListener('click', ev => {
   if (!lastState || !lastState.slot) return;
-  const r = arena.getBoundingClientRect();
   const scale = arena.width / lastState.world;
-  const wx = (ev.clientX - r.left) / scale, wy = (ev.clientY - r.top) / scale;
+  const [sx, sy] = canvasPx(ev);
+  // invert the view transform back into world-scaled (pre-zoom) coords
+  const px = (sx - view.ox) / view.zoom, py = (sy - view.oy) / view.zoom;
+  const wx = px / scale, wy = py / scale;
   let best = -1, bestd = 1e9;
   for (let i = 0; i < lastState.x.length; i++) {
     const dx = lastState.x[i] - wx, dy = lastState.y[i] - wy;
     const d = dx * dx + dy * dy;
     if (d < bestd) { bestd = d; best = i; }
   }
-  if (best >= 0 && bestd < 36 / (scale * scale)) {  // within ~6px
+  // pick radius ~8px on screen, converted to world units
+  const pickR = 8 / (scale * view.zoom);
+  if (best >= 0 && bestd < pickR * pickR) {
     selected = lastState.slot[best];
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({select: selected}));
   }
 });
 
+// scroll wheel: zoom toward the cursor (keeps the point under the mouse fixed)
+arena.addEventListener('wheel', ev => {
+  ev.preventDefault();
+  const [sx, sy] = canvasPx(ev);
+  const factor = Math.exp(-ev.deltaY * 0.0015);
+  const z = Math.min(20, Math.max(1, view.zoom * factor));
+  const k = z / view.zoom;
+  // world point under cursor must map to the same screen pixel after zoom
+  view.ox = sx - (sx - view.ox) * k;
+  view.oy = sy - (sy - view.oy) * k;
+  view.zoom = z;
+  if (z === 1) { view.ox = 0; view.oy = 0; }   // snap back to full view
+  updateViewHud();
+}, { passive: false });
+
+// + / − change replay speed (server tick rate); 0 resets the view
+window.addEventListener('keydown', ev => {
+  if (ev.key === '+' || ev.key === '=') {
+    speed = Math.min(8, speed * 1.25);
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({speed}));
+    updateViewHud();
+  } else if (ev.key === '-' || ev.key === '_') {
+    speed = Math.max(0.1, speed / 1.25);
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({speed}));
+    updateViewHud();
+  } else if (ev.key === '0') {
+    view.zoom = 1; view.ox = 0; view.oy = 0;
+    updateViewHud();
+  }
+});
+
 function connect() {
   ws = new WebSocket('ws://' + location.hostname + ':8001/');
-  ws.onopen = () => { if (selected !== null) ws.send(JSON.stringify({select: selected})); };
+  ws.onopen = () => {
+    if (selected !== null) ws.send(JSON.stringify({select: selected}));
+    if (speed !== 1.0) ws.send(JSON.stringify({speed}));
+  };
   ws.onmessage = e => draw(JSON.parse(e.data));
   ws.onclose = () => setTimeout(connect, 1000);
 }
+updateViewHud();
 connect();
 </script>
 </body>
