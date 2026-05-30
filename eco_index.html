@@ -13,29 +13,47 @@
   .k { color: #8b949e; }
   h1 { font-size: 16px; margin: 16px 16px 0; font-weight: 600; }
   .dim { color: #8b949e; font-size: 12px; margin: 2px 16px 0; }
+  #arena { cursor: crosshair; }
+  #inspect { margin-top: 12px; font-size: 12px; line-height: 1.5; width: 420px;
+             background: #11161d; border: 1px solid #222; border-radius: 6px;
+             padding: 10px 12px; box-sizing: border-box; }
+  #inspect h2 { font-size: 13px; margin: 0 0 6px; }
+  #inspect table { border-collapse: collapse; }
+  #inspect td { padding: 1px 8px 1px 0; }
+  .bar { display: inline-block; height: 9px; background: #3b82f6;
+         vertical-align: middle; border-radius: 2px; }
+  .barrow { white-space: nowrap; }
+  .chosen .bar { background: #f0b429; }
+  .chosen { color: #f0b429; font-weight: 600; }
+  .muted { color: #8b949e; }
 </style>
 </head>
 <body>
 <h1>Lotka-Volterra Ecosystem</h1>
 <div class="dim">live <span class="grass">grass</span> ·
   <span class="rab">rabbits</span> · <span class="fox">foxes</span>
-  — predators lag prey</div>
+  — predators lag prey · <b>click any entity to inspect its state &amp; action</b></div>
 <div id="wrap">
   <canvas id="arena" width="560" height="560"></canvas>
   <div>
     <div id="hud"></div>
     <canvas id="chart" width="420" height="240"></canvas>
+    <div id="inspect">click an entity to inspect it</div>
   </div>
 </div>
 <script>
 const arena = document.getElementById('arena'), ax = arena.getContext('2d');
 const chart = document.getElementById('chart'), cx = chart.getContext('2d');
 const hud = document.getElementById('hud');
+const inspectEl = document.getElementById('inspect');
 const histF = [], histR = [], histG = [], HMAX = 420;
+let selected = null, lastState = null, ws = null;
 
 function draw(s) {
+  lastState = s;
   const W = arena.width, scale = W / s.world;
   ax.clearRect(0, 0, W, W);
+  let selPx = null;
   for (let i = 0; i < s.t.length; i++) {
     const px = s.x[i] * scale, py = s.y[i] * scale, t = s.t[i];
     if (t === 1) { ax.fillStyle = '#2f8f2f'; ax.fillRect(px-1, py-1, 2, 2); }
@@ -43,7 +61,13 @@ function draw(s) {
       ax.arc(px, py, 2.2, 0, 7); ax.fill(); }
     else { ax.fillStyle = '#ff5b5b'; ax.beginPath();
       ax.arc(px, py, 3.2, 0, 7); ax.fill(); }
+    if (s.slot && s.slot[i] === selected) selPx = [px, py];
   }
+  if (selPx) {  // highlight ring around the inspected entity
+    ax.strokeStyle = '#f0b429'; ax.lineWidth = 2; ax.beginPath();
+    ax.arc(selPx[0], selPx[1], 7, 0, 7); ax.stroke();
+  }
+  if (s.inspect) renderInspect(s.inspect);
   hud.innerHTML =
     `<span class="k">step</span>   ${s.step}<br>` +
     `<span class="grass">grass  </span> ${s.grass}<br>` +
@@ -73,8 +97,81 @@ function drawChart() {
   cx.fillText('population vs time  (max ' + max + ')', 6, 12);
 }
 
+function renderInspect(d) {
+  if (!d.alive) {
+    inspectEl.innerHTML = `<h2>slot ${d.slot}</h2>` +
+      `<span class="muted">entity died / empty — click another</span>`;
+    return;
+  }
+  const colorOf = {grass: '#5fd35f', rabbit: '#f0f0f0', fox: '#ff6b6b'};
+  let h = `<h2 style="color:${colorOf[d.type_name]}">` +
+    `${d.type_name.toUpperCase()} · slot ${d.slot}</h2>`;
+  h += `<table>
+    <tr><td class="muted">position</td><td>(${d.x}, ${d.y})</td></tr>
+    <tr><td class="muted">energy</td><td>${d.energy}</td></tr></table>`;
+  if (d.note) h += `<div class="muted" style="margin-top:6px">${d.note}</div>`;
+
+  if (d.obs) {
+    const o = d.obs;
+    h += `<h2 style="margin-top:10px">STATE — observation (policy input)</h2>`;
+    h += `<table>
+      <tr><td class="muted">self x,y (norm)</td><td>${o.self.x_norm}, ${o.self.y_norm}</td></tr>
+      <tr><td class="muted">self energy (norm)</td><td>${o.self.energy_norm}</td></tr>
+      <tr><td class="muted">is_fox</td><td>${o.self.is_fox}</td></tr>
+      <tr><td class="muted">visible neighbours</td><td>${o.n_visible} / 16</td></tr>
+    </table>`;
+    if (o.visible.length) {
+      h += `<table style="margin-top:4px"><tr class="muted">` +
+        `<td>#</td><td>kind</td><td>Δx</td><td>Δy</td><td>dist</td></tr>`;
+      o.visible.slice(0, 8).forEach((e, i) => {
+        h += `<tr><td class="muted">${i}</td><td>${e.kind}</td>` +
+          `<td>${e.rel_dx}</td><td>${e.rel_dy}</td><td>${e.dist}</td></tr>`;
+      });
+      h += `</table>`;
+      if (o.visible.length > 8)
+        h += `<span class="muted">…${o.visible.length - 8} more</span>`;
+    }
+  }
+
+  if (d.policy) {
+    const p = d.policy, mx = Math.max(...p.probs);
+    h += `<h2 style="margin-top:10px">ACTION — policy output</h2>`;
+    h += `<div>value V(s) = <b>${p.value}</b> · ` +
+      `chosen = <span class="chosen">${p.action_label}</span></div>`;
+    h += `<table style="margin-top:4px">`;
+    p.probs.forEach((pr, i) => {
+      const w = Math.round(pr / (mx + 1e-9) * 160);
+      const cls = i === p.action ? ' class="chosen"' : '';
+      h += `<tr${cls}><td>${p.labels[i]}</td>` +
+        `<td class="muted">${p.logits[i]}</td>` +
+        `<td class="barrow"><span class="bar" style="width:${w}px"></span> ` +
+        `${(pr * 100).toFixed(1)}%</td></tr>`;
+    });
+    h += `</table>`;
+  }
+  inspectEl.innerHTML = h;
+}
+
+arena.addEventListener('click', ev => {
+  if (!lastState || !lastState.slot) return;
+  const r = arena.getBoundingClientRect();
+  const scale = arena.width / lastState.world;
+  const wx = (ev.clientX - r.left) / scale, wy = (ev.clientY - r.top) / scale;
+  let best = -1, bestd = 1e9;
+  for (let i = 0; i < lastState.x.length; i++) {
+    const dx = lastState.x[i] - wx, dy = lastState.y[i] - wy;
+    const d = dx * dx + dy * dy;
+    if (d < bestd) { bestd = d; best = i; }
+  }
+  if (best >= 0 && bestd < 36 / (scale * scale)) {  // within ~6px
+    selected = lastState.slot[best];
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({select: selected}));
+  }
+});
+
 function connect() {
-  const ws = new WebSocket('ws://' + location.hostname + ':8001/');
+  ws = new WebSocket('ws://' + location.hostname + ':8001/');
+  ws.onopen = () => { if (selected !== null) ws.send(JSON.stringify({select: selected})); };
   ws.onmessage = e => draw(JSON.parse(e.data));
   ws.onclose = () => setTimeout(connect, 1000);
 }

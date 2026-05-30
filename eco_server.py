@@ -27,6 +27,44 @@ import websockets
 import eco_engine as E
 from eco_oscillation import ECO
 
+# compass labels for the 8 discrete actions, matching DIRX/DIRY in eco_engine.cpp
+# (index 0 = +x/East, 2 = +y, going counter-clockwise in engine coords)
+ACTION_LABELS = ["E →", "NE ↗", "N ↑", "NW ↖", "W ←", "SW ↙", "S ↓", "SE ↘"]
+TYPE_NAME = {E.GRASS: "grass", E.RABBIT: "rabbit", E.FOX: "fox"}
+
+
+def decode_obs(o):
+    """Turn a raw AOBS observation vector into the human-readable state the
+    policy actually sees: the self-state block + each visible neighbour."""
+    world = ECO["world"]
+    vision = ECO["vision"]
+    self_state = {
+        "x_norm": round(float(o[0]), 3),
+        "y_norm": round(float(o[1]), 3),
+        "energy_norm": round(float(o[2]), 3),
+        "is_fox": round(float(o[3]), 1),
+    }
+    ents = []
+    base = E.AOBS - E.MAX_VIS * 6  # SELF_DIM offset (== 4)
+    for k in range(E.MAX_VIS):
+        e = o[base + k * 6: base + (k + 1) * 6]
+        if e[0] < 0.5:
+            continue  # inactive / padding slot
+        if e[3] > 0.5:
+            kind = "rabbit"
+        elif e[4] > 0.5:
+            kind = "fox"
+        else:
+            kind = "grass"
+        ents.append({
+            "kind": kind,
+            "rel_dx": round(float(e[1]) * vision, 2),  # back to world units
+            "rel_dy": round(float(e[2]) * vision, 2),
+            "dist": round(float(np.hypot(e[1], e[2]) * vision), 2),
+        })
+    ents.sort(key=lambda d: d["dist"])
+    return {"self": self_state, "visible": ents, "n_visible": len(ents)}
+
 
 class Sim:
     def __init__(self, use_policy=False, ckpt="experiments/eco_policies.pt",
@@ -56,6 +94,7 @@ class Sim:
         else:
             self.eng = E.EcoEngine(use_grid=True, seed=int(time.time()) & 0xffff, **ECO)
         self.frame_ms = 0.0
+        self.selected = None        # pool slot the browser asked to inspect
 
     def tick(self):
         t0 = time.perf_counter()
@@ -82,12 +121,64 @@ class Sim:
         state = self.serialize()
         self.frame_ms = (time.perf_counter() - t0) * 1000.0
         state["frame_ms"] = round(self.frame_ms, 2)
+        if self.selected is not None:
+            state["inspect"] = self.inspect(self.selected)
         return state
+
+    def inspect(self, slot):
+        """Full state/action trace for one entity: its raw engine state, the
+        observation the policy receives, and (for foxes/rabbits) the policy's
+        logits, action-probability distribution, chosen action and value."""
+        eng = self.eng
+        ty = np.asarray(eng.types())
+        if slot < 0 or slot >= len(ty) or ty[slot] == E.EMPTY:
+            return {"slot": int(slot), "alive": False}
+        t = int(ty[slot])
+        info = {
+            "slot": int(slot), "alive": True, "type": t,
+            "type_name": TYPE_NAME[t],
+            "x": round(float(np.asarray(eng.xs())[slot]), 2),
+            "y": round(float(np.asarray(eng.ys())[slot]), 2),
+            "energy": round(float(np.asarray(eng.energies())[slot]), 3),
+        }
+        if t == E.GRASS:
+            info["note"] = "passive energy node — no observation, no policy"
+            return info
+        # rabbits/foxes: rebuild this frame's agent observations and locate ours
+        eng.build_agent_obs()
+        obs = np.asarray(eng.agent_obs())
+        slots = np.asarray(eng.agent_slots())
+        row = np.where(slots == slot)[0]
+        if row.size == 0:
+            return info
+        o = obs[row[0]]
+        info["obs"] = decode_obs(o)
+        if self.use_policy:
+            torch = self._torch
+            ot = torch.as_tensor(o[None], device=self.runner.device)
+            with torch.no_grad():
+                logits, value = self.runner.policy[t](ot)
+                probs = torch.softmax(logits, dim=-1)[0].cpu().numpy()
+                logits = logits[0].cpu().numpy()
+                value = float(value.squeeze().cpu())
+            a = int(np.argmax(probs))
+            info["policy"] = {
+                "labels": ACTION_LABELS,
+                "logits": [round(float(x), 3) for x in logits],
+                "probs": [round(float(x), 4) for x in probs],
+                "action": a,
+                "action_label": ACTION_LABELS[a],
+                "value": round(value, 3),
+            }
+        else:
+            info["note"] = "random-walk mode — no policy loaded (run with --policy)"
+        return info
 
     def serialize(self):
         eng = self.eng
         ty = np.asarray(eng.types())
         mask = ty != E.EMPTY
+        slots = np.where(mask)[0]
         xs = np.asarray(eng.xs())[mask]
         ys = np.asarray(eng.ys())[mask]
         ty = ty[mask]
@@ -96,6 +187,7 @@ class Sim:
             "x": xs.round(2).tolist(),
             "y": ys.round(2).tolist(),
             "t": ty.tolist(),                       # 1 grass, 2 rabbit, 3 fox
+            "slot": slots.tolist(),                 # pool index, for selection
             "foxes": eng.count_foxes(),
             "rabbits": eng.count_rabbits(),
             "grass": eng.count_grass(),
@@ -106,9 +198,25 @@ class Sim:
 _RAND = np.full(E.MAX_TOTAL_ENTITIES, -1, dtype=np.int8)
 
 
+async def _receiver(websocket, sim):
+    """Listen for {"select": slot|null} messages from the browser."""
+    try:
+        async for msg in websocket:
+            try:
+                data = json.loads(msg)
+            except (ValueError, TypeError):
+                continue
+            if "select" in data:
+                sel = data["select"]
+                sim.selected = int(sel) if sel is not None else None
+    except websockets.ConnectionClosed:
+        pass
+
+
 async def stream(websocket, sim, hz):
     dt = 1.0 / hz
     next_t = time.perf_counter()
+    recv_task = asyncio.create_task(_receiver(websocket, sim))
     try:
         while True:
             await websocket.send(json.dumps(sim.tick()))
@@ -120,6 +228,8 @@ async def stream(websocket, sim, hz):
                 next_t = time.perf_counter()
     except websockets.ConnectionClosed:
         pass
+    finally:
+        recv_task.cancel()
 
 
 def serve_http(port):
