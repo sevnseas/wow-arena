@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Lotka-Volterra Ecosystem — Foxes / Rabbits / Grass</title>
+<style>
+  body { margin: 0; background: #0d1117; color: #c9d1d9;
+         font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #wrap { display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; }
+  canvas { background: #11161d; border: 1px solid #222; border-radius: 6px; }
+  #hud { font-size: 14px; line-height: 1.7; }
+  .fox { color: #ff6b6b; } .rab { color: #f0f0f0; } .grass { color: #5fd35f; }
+  .k { color: #8b949e; }
+  h1 { font-size: 16px; margin: 16px 16px 0; font-weight: 600; }
+  .dim { color: #8b949e; font-size: 12px; margin: 2px 16px 0; }
+</style>
+</head>
+<body>
+<h1>Lotka-Volterra Ecosystem</h1>
+<div class="dim">live <span class="grass">grass</span> ·
+  <span class="rab">rabbits</span> · <span class="fox">foxes</span>
+  — predators lag prey</div>
+<div id="wrap">
+  <canvas id="arena" width="560" height="560"></canvas>
+  <div>
+    <div id="hud"></div>
+    <canvas id="chart" width="420" height="240"></canvas>
+  </div>
+</div>
+<script>
+const arena = document.getElementById('arena'), ax = arena.getContext('2d');
+const chart = document.getElementById('chart'), cx = chart.getContext('2d');
+const hud = document.getElementById('hud');
+const histF = [], histR = [], histG = [], HMAX = 420;
+
+function draw(s) {
+  const W = arena.width, scale = W / s.world;
+  ax.clearRect(0, 0, W, W);
+  for (let i = 0; i < s.t.length; i++) {
+    const px = s.x[i] * scale, py = s.y[i] * scale, t = s.t[i];
+    if (t === 1) { ax.fillStyle = '#2f8f2f'; ax.fillRect(px-1, py-1, 2, 2); }
+    else if (t === 2) { ax.fillStyle = '#f0f0f0'; ax.beginPath();
+      ax.arc(px, py, 2.2, 0, 7); ax.fill(); }
+    else { ax.fillStyle = '#ff5b5b'; ax.beginPath();
+      ax.arc(px, py, 3.2, 0, 7); ax.fill(); }
+  }
+  hud.innerHTML =
+    `<span class="k">step</span>   ${s.step}<br>` +
+    `<span class="grass">grass  </span> ${s.grass}<br>` +
+    `<span class="rab">rabbits</span> ${s.rabbits}<br>` +
+    `<span class="fox">foxes  </span> ${s.foxes}<br>` +
+    `<span class="k">frame</span>  ${s.frame_ms} ms`;
+
+  histF.push(s.foxes); histR.push(s.rabbits); histG.push(s.grass);
+  if (histF.length > HMAX) { histF.shift(); histR.shift(); histG.shift(); }
+  drawChart();
+}
+
+function drawChart() {
+  const W = chart.width, H = chart.height;
+  cx.clearRect(0, 0, W, H);
+  const max = Math.max(10, ...histR, ...histF, ...histG);
+  const line = (arr, color) => {
+    cx.strokeStyle = color; cx.lineWidth = 1.4; cx.beginPath();
+    for (let i = 0; i < arr.length; i++) {
+      const x = i / HMAX * W, y = H - arr[i] / max * (H - 12) - 4;
+      i ? cx.lineTo(x, y) : cx.moveTo(x, y);
+    }
+    cx.stroke();
+  };
+  line(histG, '#2f8f2f'); line(histR, '#f0f0f0'); line(histF, '#ff5b5b');
+  cx.fillStyle = '#8b949e'; cx.font = '11px monospace';
+  cx.fillText('population vs time  (max ' + max + ')', 6, 12);
+}
+
+function connect() {
+  const ws = new WebSocket('ws://' + location.hostname + ':8001/');
+  ws.onmessage = e => draw(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connect, 1000);
+}
+connect();
+</script>
+</body>
+</html>
