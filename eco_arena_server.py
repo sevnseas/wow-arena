@@ -241,7 +241,8 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hz", type=int, default=12)
     ap.add_argument("--mode", choices=["scripted", "random", "policy"],
-                    default="scripted")
+                    default=None,
+                    help="default: 'policy' if the checkpoint exists, else 'scripted'")
     ap.add_argument("--ckpt", default="experiments/arena_stage3.pt")
     ap.add_argument("--world", type=float, default=50.0)
     ap.add_argument("--http-port", type=int, default=8000)
@@ -249,12 +250,18 @@ async def main():
     ap.add_argument("--device", default="cpu")
     args = ap.parse_args()
 
-    sim = ArenaSim(mode=args.mode, ckpt=args.ckpt, device=args.device,
+    import os
+    mode = args.mode
+    if mode is None:
+        mode = "policy" if os.path.exists(args.ckpt) else "scripted"
+        print(f"auto-selected mode='{mode}' "
+              f"({'checkpoint found' if mode == 'policy' else 'no checkpoint'})")
+    sim = ArenaSim(mode=mode, ckpt=args.ckpt, device=args.device,
                    world=args.world)
     serve_http(args.http_port)
     handler = functools.partial(stream, sim=sim, hz=args.hz)
     print(f"ws    stream  -> ws://localhost:{args.ws_port}/  @ {args.hz} Hz "
-          f"(mode={args.mode})")
+          f"(mode={mode})")
     async with websockets.serve(handler, "0.0.0.0", args.ws_port):
         await asyncio.Future()
 

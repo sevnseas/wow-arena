@@ -196,12 +196,18 @@ bars are HP, a gold ring marks a crowd-controlled agent.
 ```bash
 # --- retrain the policy ---
 python3 eco_arena_train.py              # Stage 1 (target dummy) -> experiments/arena_stage1_dummy.pt
+
+# Stage 3 adversarial 3v3 self-play (GPU; writes experiments/arena_stage3.pt):
+python3 eco_arena_selfplay.py --minutes 15 --device cuda --out experiments/arena_stage3.pt
 ```
 
-The curriculum `Stage 1` trainer is wired and validated (damage efficiency climbs,
-checkpoint reload preserves structure). `--mode policy` loads `arena_stage3.pt` when
-present; full Stage 2/3 self-play training to a learned ≥60% CC-chain rate is the
-remaining work (the env, policy, masking and metric it needs are all in place).
+The viewer auto-loads `experiments/arena_stage3.pt` in `policy` mode when present
+(otherwise falls back to `scripted`). A committed 15-min GPU self-play checkpoint
+ships in `experiments/`; it reaches **~33% CC-chain success vs ~24% random** (best
+eval snapshot 63%) — it learns to coordinate better than random but is capped
+because the policy observation does not yet expose hp/mana/CC state. Making the
+observation combat-aware (an engine obs change) is the next step toward the ≥60%
+target; the env, policy, masking and metric are all already in place.
 
 ## Status / measured results
 
