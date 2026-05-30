@@ -95,9 +95,12 @@ python eco_server.py --policy --hz 30 --device cuda # open http://localhost:8000
 ## Live viewer
 
 `eco_server.py` runs one live `EcoEngine` and streams every entity's position +
-type and the running fox/rabbit/grass counts over a WebSocket to a canvas
-(`eco_index.html`): green = grass, white = rabbits, red = foxes, plus a scrolling
-population graph where you can watch foxes **lag** rabbits.
+type and the running fox/rabbit/grass counts over a WebSocket to a Three.js scene
+(`eco_index.html`): grass nodes grow from the terrain, procedural rabbits hop
+between streamed positions, and animated mutant rigs from `wow-arena` visualize
+foxes. `EcoEngine`, `ECO`, and the existing fox/rabbit shared policies remain
+authoritative; `wow-arena` contributes graphics only. A scrolling population
+graph shows foxes **lagging** rabbits.
 
 ```bash
 python eco_server.py --hz 30                        # random-walk agents (instant, no training)
@@ -110,9 +113,12 @@ Then open **http://localhost:8000/eco_index.html**.
 
 | input | effect |
 |-------|--------|
-| **click** an entity | select it; a gold ring marks it and the side panel shows its live **state → action** trace |
-| **scroll wheel** | zoom 1×–20× toward the cursor (markers/ring stay constant size) |
-| **`0`** | reset zoom/pan to full view |
+| **click** scene | capture the mouse for the fly camera; click again while captured to inspect the aimed-at entity |
+| **mouse** | look around while the fly camera is captured |
+| **`W` / `A` / `S` / `D`** | fly horizontally |
+| **`R` / `F`** or **space** | rise / fall |
+| **shift** | fly faster |
+| **`E`** | inspect the entity under the crosshair |
 | **`+` / `−`** | replay speed 0.1×–8× (browser sends `{speed}`, server scales its tick interval) |
 
 The selection panel (`Sim.inspect` → WebSocket, bidirectional) shows, per click:
@@ -134,7 +140,7 @@ mode the panel shows state only, with a note that no policy is loaded.
 | `eco_marl.py` | Task 3 — `MARLRunner`: two shared policies, type-routed actions, ID-sync guard, PPO update, `save`/`load` |
 | `eco_oscillation.py` | Task 4 — long-horizon validator + tuned config `ECO` |
 | `train_eco.py` | train both policies once → `experiments/eco_policies.pt` |
-| `eco_server.py` / `eco_index.html` | live WebSocket viewer (random-walk or pretrained); click-to-inspect entity state/action, scroll-zoom, `+/−` replay speed |
+| `eco_server.py` / `eco_index.html` / `eco_viewer.js` | live Three.js WebSocket viewer (random-walk or pretrained); fly camera, crosshair inspection, `+/−` replay speed |
 | `test_eco.py` / `test_policy.py` / `test_marl.py` | acceptance harnesses for Tasks 1–3 |
 
 ## Status / measured results
