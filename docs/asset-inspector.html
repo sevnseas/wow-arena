@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Procedural Asset Inspector</title>
+  <style>
+    :root {
+      color: #f5e4bd;
+      background: #17241b;
+      font-family: Georgia, serif;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+    }
+    aside {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      width: 292px;
+      padding: 16px;
+      background: rgba(31, 23, 16, 0.94);
+      border: 2px solid #92734a;
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+    }
+    h1 {
+      margin: 0 0 5px;
+      color: #f1c86a;
+      font-size: 20px;
+    }
+    p {
+      margin: 0;
+      color: #c7b693;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    label {
+      display: block;
+      margin: 15px 0 6px;
+      color: #d9bd83;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    select {
+      width: 100%;
+      padding: 8px 9px;
+      color: #f5e4bd;
+      background: #36271b;
+      border: 1px solid #8c6a3f;
+      font: 14px Georgia, serif;
+    }
+    dl {
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      gap: 5px 8px;
+      margin: 14px 0 0;
+      padding-top: 12px;
+      border-top: 1px solid rgba(202, 167, 103, 0.35);
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+    }
+    dt {
+      color: #9f8e70;
+    }
+    dd {
+      margin: 0;
+      color: #f1d9aa;
+    }
+    .controls {
+      margin-top: 12px;
+      color: #ad9b7d;
+    }
+  </style>
+  <script type="module" crossorigin src="./assets/assetInspector-B5dM3Vr_.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/procedural-structures-CTDze6mt.js">
+</head>
+<body>
+  <aside>
+    <h1>Procedural Asset Inspector</h1>
+    <p>Review one shared in-game asset at a time. The dropdown is populated from the procedural catalog.</p>
+    <label for="asset-select">Asset</label>
+    <select id="asset-select"></select>
+    <dl>
+      <dt>Category</dt><dd id="asset-category"></dd>
+      <dt>Size</dt><dd id="asset-size"></dd>
+      <dt>Meshes</dt><dd id="asset-meshes"></dd>
+      <dt>Triangles</dt><dd id="asset-triangles"></dd>
+    </dl>
+    <p class="controls">Drag to orbit. Scroll to zoom. Right-drag to pan.</p>
+  </aside>
+</body>
+</html>

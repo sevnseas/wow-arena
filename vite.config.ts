@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig({
-  base: '/threejs-arena/',
+  base: './',
   build: {
     outDir: 'docs',
     emptyOutDir: false,
