@@ -282,7 +282,7 @@ export class GrassField extends THREE.Group {
       // autumn, gold in arid, frosted in tundra), blended smoothly across
       // zone borders by the shared biome weight field.
       const bt = blendBiomeTint(x, z, BIOME_GROUND_TINT);
-      const clampBiome = (v: number) => Math.max(0.45, Math.min(1.7, v));
+      const clampBiome = (v: number) => Math.max(0.35, Math.min(1.9, v));
       tints[i * 3 + 0] = clampBiome(clampTint(tinted.r / Math.max(0.001, tintBase.r)) * bt[0]);
       tints[i * 3 + 1] = clampBiome(clampTint(tinted.g / Math.max(0.001, tintBase.g)) * bt[1]);
       tints[i * 3 + 2] = clampBiome(clampTint(tinted.b / Math.max(0.001, tintBase.b)) * bt[2]);

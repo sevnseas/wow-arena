@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { createAxisGizmo } from './coords';
 import { blendBiomeTint, BIOME_FOG_TINT } from './biomes';
+import { createRoads } from './roads';
 import { createArena, getColliders, getTerrainHeightData, Collider } from './arena';
 import { createRegions } from './regions';
 import { CameraRig } from './camera';
@@ -750,6 +751,10 @@ async function init(): Promise<GameState> {
   // world-space colliders gathered into the player's collision set.
   const regions = createRegions((x, z) => getTerrainHeight(x, z, terrainData));
   scene.add(regions);
+
+  // Gravel roads from the central clearing to each region and biome camp.
+  const roads = createRoads((x, z) => getTerrainHeight(x, z, terrainData));
+  scene.add(roads);
 
   // A single procedural tree placed on the map as a tweakable showcase —
   // pickable in the SceneEditor with full param schema (seed, trunk height,

@@ -250,24 +250,51 @@ export function createForest(terrainHeightData: Uint8Array | null): THREE.Group 
   const forest = new THREE.Group();
   forest.name = 'Forest';
 
-  // Scatter a woodland ring around the central clearing, plus looser clumps
-  // out across the rolling hills so the enlarged world reads as forested.
+  // Forested ring around the central clearing. Most trees gather into dense
+  // woodland clumps (gaussian around clump centers — WoW-style copses with
+  // open meadow between), the rest scatter loosely so the gaps aren't empty.
   const minDist = 26;
-  const maxDist = 115;
-  const treeCount = 90;
+  const maxDist = 120;
+  const treeCount = 150;
+  const CLUMPS = 12;
+
+  const clumps: Array<{ x: number; z: number; spread: number }> = [];
+  let cGuard = 0;
+  while (clumps.length < CLUMPS && cGuard++ < CLUMPS * 12) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = minDist + 8 + Math.random() * (maxDist - minDist - 16);
+    const x = Math.cos(angle) * dist;
+    const z = Math.sin(angle) * dist;
+    if (REGION_FOOTPRINTS.some(f => Math.hypot(x - f.x, z - f.z) < f.r + 6)) continue;
+    clumps.push({ x, z, spread: 6 + Math.random() * 7 });
+  }
+
+  const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 2;
 
   const placements: Array<{ x: number; z: number; y: number; scale: number; rotY: number }> = [];
   let guard = 0;
   while (placements.length < treeCount && guard++ < treeCount * 8) {
-    const angle = Math.random() * Math.PI * 2;
-    // Bias toward the nearer ring (sqrt) but allow distant stragglers.
-    const dist = minDist + Math.sqrt(Math.random()) * (maxDist - minDist);
-    const x = Math.cos(angle) * dist;
-    const z = Math.sin(angle) * dist;
+    let x: number, z: number;
+    if (clumps.length > 0 && Math.random() < 0.7) {
+      // Clumped: gaussian around a random clump center.
+      const c = clumps[Math.floor(Math.random() * clumps.length)];
+      x = c.x + gauss() * c.spread;
+      z = c.z + gauss() * c.spread;
+      const d = Math.hypot(x, z);
+      if (d < minDist || d > maxDist + 10) continue;
+    } else {
+      // Loose scatter, biased toward the nearer ring.
+      const angle = Math.random() * Math.PI * 2;
+      const dist = minDist + Math.sqrt(Math.random()) * (maxDist - minDist);
+      x = Math.cos(angle) * dist;
+      z = Math.sin(angle) * dist;
+    }
 
     // Keep clearings around the themed regions so towns/farms/swamps aren't
     // buried under forest.
     if (REGION_FOOTPRINTS.some(f => Math.hypot(x - f.x, z - f.z) < f.r)) continue;
+    // Keep trees from intersecting each other inside dense clumps.
+    if (placements.some(p => Math.hypot(x - p.x, z - p.z) < 2.6)) continue;
 
     placements.push({
       x,

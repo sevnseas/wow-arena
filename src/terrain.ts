@@ -186,13 +186,13 @@ function createTerrainMaterial(): THREE.MeshStandardMaterial {
           vec4 bw = biomeWeights(bp);
           vec3 biomeTint =
               bw.x * vec3(1.0, 1.0, 1.0) +      // grassland
-              bw.y * vec3(1.38, 0.92, 0.52) +   // autumn amber
-              bw.z * vec3(1.30, 1.10, 0.62) +   // arid gold
-              bw.w * vec3(0.94, 1.00, 1.08);    // tundra frost
+              bw.y * vec3(1.58, 0.86, 0.34) +   // autumn amber
+              bw.z * vec3(1.48, 1.18, 0.46) +   // arid gold
+              bw.w * vec3(0.86, 1.00, 1.20);    // tundra frost
           col *= biomeTint;
           // Tundra additionally desaturates toward a frosted pale green.
           float blum = dot(col, vec3(0.299, 0.587, 0.114));
-          col = mix(col, vec3(blum) * vec3(0.96, 1.02, 1.06), bw.w * 0.55);
+          col = mix(col, vec3(blum) * vec3(0.94, 1.03, 1.10), bw.w * 0.72);
 
           return max(col, vec3(0.0));
         }

@@ -35,27 +35,41 @@ export const BIOME_ZONES: BiomeZone[] = [
  * ecosystem palettes' mood, expressed as multiplicative tints on lush green). */
 export const BIOME_GROUND_TINT: Record<BiomeKey, [number, number, number]> = {
   grassland: [1.0, 1.0, 1.0],
-  autumn: [1.38, 0.92, 0.52],   // amber/rust
-  tundra: [0.94, 1.0, 1.08],    // frosted, desaturated (extra desat in shader)
-  arid: [1.30, 1.10, 0.62],     // sun-baked gold
+  autumn: [1.58, 0.86, 0.34],   // deep amber/rust
+  tundra: [0.86, 1.00, 1.20],   // frosted, desaturated (extra desat in shader)
+  arid: [1.48, 1.18, 0.46],     // sun-baked gold
 };
 
 /** Atmosphere tint per biome — multiplies fog/haze when the player stands
  * inside the zone, so each ecosystem has its own air. */
 export const BIOME_FOG_TINT: Record<BiomeKey, [number, number, number]> = {
   grassland: [1.0, 1.0, 1.0],
-  autumn: [1.12, 1.0, 0.82],
-  tundra: [0.94, 1.0, 1.10],
-  arid: [1.10, 1.02, 0.84],
+  autumn: [1.24, 0.98, 0.68],
+  tundra: [0.84, 0.97, 1.22],
+  arid: [1.20, 1.05, 0.70],
 };
 
 /** Foliage colors for trees by biome (blended by weight at the tree's spot). */
 export const BIOME_FOLIAGE: Record<BiomeKey, number> = {
   grassland: 0x5d8a37,
-  autumn: 0xb05a1c,
-  tundra: 0x7fa08a,
-  arid: 0x8a8a3a,
+  autumn: 0xc24e10,
+  tundra: 0x9cbcaa,
+  arid: 0x9a9432,
 };
+
+/** Shrub foliage greens per biome — used by the instanced bush scatter. */
+export const BIOME_SHRUB: Record<BiomeKey, number> = {
+  grassland: 0x4d7529,
+  autumn: 0xa3551a,
+  tundra: 0x88a896,
+  arid: 0x8f8530,
+};
+
+/** Encampment anchor for each outer biome — partway from the world center
+ * toward the zone heart, where the camp + its gravel road terminate. */
+export function biomeCampPosition(zone: BiomeZone): { x: number; z: number } {
+  return { x: zone.x * 0.62, z: zone.z * 0.62 };
+}
 
 const tmpWeights: number[] = [0, 0, 0, 0];
 

@@ -15,6 +15,8 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GrassField } from './grass';
 import type { Collider } from './arena';
+import { BIOME_ZONES, biomeCampPosition, blendBiomeColor, BIOME_SHRUB } from './biomes';
+import { REGION_FOOTPRINTS } from './regions';
 // @ts-ignore - shared JS builders are also consumed directly by the Node PNG renderer.
 import { collectStructureColliders, createRoundHut, createVillageCluster } from './procedural-structures.js';
 
@@ -178,6 +180,7 @@ export class Ecosystem extends THREE.Group {
     // silhouettes. Villages sit outside the combat ring as scenic landmarks.
     const hutsGroup = buildHuts(rng, this.params, palette, this.heightSampler);
     const villagesGroup = buildVillages(rng, this.params, palette, this.heightSampler);
+    const campsGroup = buildBiomeCamps(rng, this.params, this.heightSampler);
     const hutObstacles = hutsGroup.children.map(h => ({
       x: h.position.x,
       z: h.position.z,
@@ -198,13 +201,23 @@ export class Ecosystem extends THREE.Group {
       { x: -8, z:  8, r: 1.6 },
       { x:  8, z:  8, r: 1.6 },
     ];
-    const obstacles = [...hutObstacles, ...villageObstacles, ...pillarObstacles];
+    const campObstacles = (campsGroup.userData.colliders as Collider[])
+      .map(c => ({
+        x: c.x,
+        z: c.z,
+        r: c.type === 'cylinder'
+          ? c.radius
+          : Math.sqrt(c.width * c.width + c.depth * c.depth) * 0.5,
+      }));
+    const obstacles = [...hutObstacles, ...villageObstacles, ...campObstacles, ...pillarObstacles];
 
     this.add(hutsGroup);
     this.add(villagesGroup);
+    this.add(campsGroup);
     this.add(buildFlowers(rng, this.params, palette, this.heightSampler));
     this.add(buildRocks(rng, this.params, palette, this.heightSampler, obstacles));
     this.add(buildMushrooms(rng, this.params, palette, this.heightSampler));
+    this.add(buildShrubs(rng, this.heightSampler, obstacles));
   }
 
   /** Drive wind animation. */
@@ -240,7 +253,7 @@ export class Ecosystem extends THREE.Group {
         const cols = child.userData.colliders as Collider[] | undefined;
         if (cols) out.push(...cols);
       }
-      if (child.name === 'Villages') {
+      if (child.name === 'Villages' || child.name === 'BiomeCamps') {
         const cols = child.userData.colliders as Collider[] | undefined;
         if (cols) out.push(...cols);
       }
@@ -711,6 +724,136 @@ function buildVillages(
 
   colliders.push(...collectStructureColliders(group) as Collider[]);
   group.userData.colliders = colliders;
+  return group;
+}
+
+/**
+ * One encampment per outer biome — a village cluster plus outlying huts at
+ * the zone's anchor point, built in that biome's own palette so each
+ * ecosystem has a distinct settlement (rust-roofed autumn camp, pale tundra
+ * lodges, sandstone arid huts). Roads (roads.ts) terminate here.
+ */
+function buildBiomeCamps(
+  rng: () => number,
+  p: EcosystemParams,
+  height: (x: number, z: number) => number,
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'BiomeCamps';
+
+  for (const zone of BIOME_ZONES) {
+    if (zone.key === 'grassland') continue;
+    const anchor = biomeCampPosition(zone);
+    const palette = PALETTES[zone.key];
+    const structurePalette = toStructurePalette(palette);
+    const facing = Math.atan2(-anchor.x, -anchor.z); // face the world center
+
+    const village = createVillageCluster({
+      seed: p.seed + 977 + zone.x,
+      fortified: rng() < 0.5,
+      scale: 0.62 + rng() * 0.08,
+      palette: structurePalette,
+    }) as THREE.Group;
+    village.position.set(anchor.x, height(anchor.x, anchor.z), anchor.z);
+    village.rotation.y = facing;
+    group.add(village);
+
+    // Outlying huts loosely ringing the camp.
+    const hutCount = 2 + Math.floor(rng() * 2);
+    for (let i = 0; i < hutCount; i++) {
+      const a = facing + Math.PI + (i / hutCount - 0.5) * 2.4 + (rng() - 0.5) * 0.4;
+      const r = 10 + rng() * 7;
+      const hx = anchor.x + Math.cos(a) * r;
+      const hz = anchor.z + Math.sin(a) * r;
+      const hut = createRoundHut({
+        seed: Math.floor(rng() * 100000),
+        palette: structurePalette,
+      }) as THREE.Group;
+      hut.position.set(hx, height(hx, hz), hz);
+      hut.rotation.y = rng() * Math.PI * 2;
+      hut.scale.setScalar(0.85 + rng() * 0.4);
+      group.add(hut);
+    }
+  }
+
+  group.userData.colliders = collectStructureColliders(group) as Collider[];
+  return group;
+}
+
+/**
+ * Shrubberies — instanced squashed-icosahedron bushes, biome-tinted, that
+ * clump along the forest ring and soften the ground between tree copses.
+ */
+function buildShrubs(
+  rng: () => number,
+  height: (x: number, z: number) => number,
+  obstacles: Array<{ x: number; z: number; r: number }>,
+): THREE.Object3D {
+  const COUNT = 320;
+  const raw = new THREE.IcosahedronGeometry(0.55, 1);
+  raw.deleteAttribute('uv');
+  raw.deleteAttribute('normal');
+  const indexed = mergeVertices(raw, 1e-3);
+  const ipos = indexed.attributes.position as THREE.BufferAttribute;
+  const j = makeRng(0x5B5B);
+  for (let i = 0; i < ipos.count; i++) {
+    const f = 0.8 + j() * 0.4;
+    ipos.setXYZ(i, ipos.getX(i) * f, Math.abs(ipos.getY(i)) * f * 0.62, ipos.getZ(i) * f);
+  }
+  const geo = indexed.toNonIndexed();
+  geo.computeVertexNormals();
+  raw.dispose();
+  indexed.dispose();
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, // full color carried by instance tints
+    roughness: 1.0,
+    metalness: 0,
+    flatShading: true,
+  });
+  const mesh = new THREE.InstancedMesh(geo, mat, COUNT);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+
+  // Clump centers along the woodland ring.
+  const clumps: Array<[number, number]> = [];
+  for (let i = 0; i < 26; i++) {
+    const a = rng() * Math.PI * 2;
+    const r = 22 + rng() * 95;
+    clumps.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+
+  const dummy = new THREE.Object3D();
+  const tint = new THREE.Color();
+  let placed = 0;
+  let attempts = 0;
+  while (placed < COUNT && attempts++ < COUNT * 8) {
+    const c = clumps[Math.floor(rng() * clumps.length)];
+    const x = c[0] + (rng() + rng() - 1) * 7;
+    const z = c[1] + (rng() + rng() - 1) * 7;
+    if (REGION_FOOTPRINTS.some(f => Math.hypot(x - f.x, z - f.z) < f.r)) continue;
+    if (obstacles.some(o => Math.hypot(x - o.x, z - o.z) < o.r + 1)) continue;
+
+    const s = 0.6 + rng() * 1.2;
+    dummy.position.set(x, height(x, z) + 0.05, z);
+    dummy.scale.set(s, s * (0.8 + rng() * 0.4), s);
+    dummy.rotation.y = rng() * Math.PI * 2;
+    dummy.updateMatrix();
+    mesh.setMatrixAt(placed, dummy.matrix);
+
+    // Biome-blended bush green with per-bush lightness jitter.
+    blendBiomeColor(x, z, (k) => BIOME_SHRUB[k], tint);
+    tint.multiplyScalar(0.85 + rng() * 0.35);
+    mesh.setColorAt(placed, tint);
+    placed++;
+  }
+  mesh.count = placed;
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+  const group = new THREE.Group();
+  group.name = 'Shrubs';
+  group.add(mesh);
   return group;
 }
 
