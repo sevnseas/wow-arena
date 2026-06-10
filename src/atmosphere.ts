@@ -122,8 +122,10 @@ export class Atmosphere {
     // Subtle bloom only on the brightest pixels (sun glints, white sprites).
     // High threshold + low strength avoids the blurry "everything glows"
     // look that wrecks the painterly grass.
+    // Half-resolution bloom: the pass is a stack of blurs, so feeding it a
+    // smaller buffer is visually indistinguishable and much cheaper.
     this.bloom = new UnrealBloomPass(
-      size,
+      size.clone().multiplyScalar(0.5),
       opts.bloomStrength ?? 0.28,
       opts.bloomRadius ?? 0.45,
       opts.bloomThreshold ?? 0.88,
@@ -186,7 +188,7 @@ export class Atmosphere {
 
   setSize(width: number, height: number): void {
     this.composer.setSize(width, height);
-    this.bloom.setSize(width, height);
+    this.bloom.setSize(width * 0.5, height * 0.5);
   }
 
   /**

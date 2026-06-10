@@ -75,6 +75,7 @@ const VERTEX_SHADER = /* glsl */ `
   uniform float uWindSpeed;
   // Each vec4 = (worldX, worldY, worldZ, pressRadius). Slot ignored when w<=0.
   uniform vec4 uActors[${MAX_ACTORS}];
+  uniform int uActorCount;
 
   void main() {
     vUv = uv;
@@ -113,6 +114,7 @@ const VERTEX_SHADER = /* glsl */ `
     vec3 bladeBase = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
     vec3 push = vec3(0.0);
     for (int i = 0; i < ${MAX_ACTORS}; i++) {
+      if (i >= uActorCount) break;
       vec4 actor = uActors[i];
       if (actor.w <= 0.0001) continue;
       vec2 d = bladeBase.xz - actor.xz;
@@ -196,6 +198,7 @@ export class GrassField extends THREE.Group {
       if (a) slots[i].set(a.pos.x, a.pos.y, a.pos.z, a.radius);
       else slots[i].set(0, 0, 0, 0);
     }
+    this.material.uniforms.uActorCount.value = Math.min(actors.length, MAX_ACTORS);
   }
 
   rebuild(): void {
@@ -236,27 +239,30 @@ export class GrassField extends THREE.Group {
         uBaseColor: { value: new THREE.Color(p.baseColor) },
         uTipColor: { value: new THREE.Color(p.tipColor) },
         uActors: { value: actorSlots },
+        uActorCount: { value: 0 },
       },
     });
-
-    const mesh = new THREE.InstancedMesh(geo, this.material, p.count);
-    mesh.frustumCulled = true;
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
-
-    // Per-instance attributes: tint (vec3) and phase (float).
-    const tints = new Float32Array(p.count * 3);
-    const phases = new Float32Array(p.count);
 
     const rng = mulberry32(p.seed);
     const placements = clusterPlacements(rng, p.innerRadius, p.outerRadius, p.count, p.patchiness);
 
+    // ---- Per-blade data (matrix, tint, phase), then partitioned into tiles.
+    //
+    // One giant InstancedMesh can never be frustum-culled (its bounding
+    // sphere spans the whole map), so every off-screen blade still costs
+    // vertex work. Splitting the field into world-aligned tiles — each its
+    // own InstancedMesh with a tight bounding sphere — lets three.js cull
+    // most of the field per frame for a handful of extra draw calls.
+    const TILE = 24;
     const dummy = new THREE.Object3D();
     const tintBase = new THREE.Color(p.tipColor);
     const hsl = { h: 0, s: 0, l: 0 };
     tintBase.getHSL(hsl);
 
-    for (let i = 0; i < p.count; i++) {
+    interface Blade { matrix: THREE.Matrix4; tint: [number, number, number]; phase: number }
+    const tiles = new Map<string, Blade[]>();
+
+    for (let i = 0; i < placements.length; i++) {
       const [x, z] = placements[i];
       const y = this.heightSampler(x, z);
       dummy.position.set(x, y, z);
@@ -264,7 +270,6 @@ export class GrassField extends THREE.Group {
       const s = 0.7 + rng() * 0.6;
       dummy.scale.set(s, 0.85 + rng() * 0.5, s);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
 
       // Per-blade hue jitter — small HSL nudge so the field has organic variance.
       const hueShift = (rng() - 0.5) * p.hueJitter;
@@ -283,18 +288,45 @@ export class GrassField extends THREE.Group {
       // zone borders by the shared biome weight field.
       const bt = blendBiomeTint(x, z, BIOME_GROUND_TINT);
       const clampBiome = (v: number) => Math.max(0.35, Math.min(1.9, v));
-      tints[i * 3 + 0] = clampBiome(clampTint(tinted.r / Math.max(0.001, tintBase.r)) * bt[0]);
-      tints[i * 3 + 1] = clampBiome(clampTint(tinted.g / Math.max(0.001, tintBase.g)) * bt[1]);
-      tints[i * 3 + 2] = clampBiome(clampTint(tinted.b / Math.max(0.001, tintBase.b)) * bt[2]);
 
-      phases[i] = rng() * Math.PI * 2;
+      const key = `${Math.floor(x / TILE)}_${Math.floor(z / TILE)}`;
+      let bucket = tiles.get(key);
+      if (!bucket) { bucket = []; tiles.set(key, bucket); }
+      bucket.push({
+        matrix: dummy.matrix.clone(),
+        tint: [
+          clampBiome(clampTint(tinted.r / Math.max(0.001, tintBase.r)) * bt[0]),
+          clampBiome(clampTint(tinted.g / Math.max(0.001, tintBase.g)) * bt[1]),
+          clampBiome(clampTint(tinted.b / Math.max(0.001, tintBase.b)) * bt[2]),
+        ],
+        phase: rng() * Math.PI * 2,
+      });
     }
-    mesh.instanceMatrix.needsUpdate = true;
 
-    geo.setAttribute('aTint', new THREE.InstancedBufferAttribute(tints, 3));
-    geo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
-
-    this.add(mesh);
+    for (const blades of tiles.values()) {
+      // Each tile needs its own geometry: instanced attributes live on the
+      // geometry object. The base arrays (position/uv) are shared via clone.
+      const tileGeo = geo.clone();
+      const tints = new Float32Array(blades.length * 3);
+      const phases = new Float32Array(blades.length);
+      const mesh = new THREE.InstancedMesh(tileGeo, this.material, blades.length);
+      for (let i = 0; i < blades.length; i++) {
+        mesh.setMatrixAt(i, blades[i].matrix);
+        tints[i * 3 + 0] = blades[i].tint[0];
+        tints[i * 3 + 1] = blades[i].tint[1];
+        tints[i * 3 + 2] = blades[i].tint[2];
+        phases[i] = blades[i].phase;
+      }
+      tileGeo.setAttribute('aTint', new THREE.InstancedBufferAttribute(tints, 3));
+      tileGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();   // accounts for instance matrices
+      mesh.frustumCulled = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      this.add(mesh);
+    }
+    geo.dispose();
   }
 }
 
