@@ -460,7 +460,10 @@ export class SkyEnvironment extends THREE.Group {
     delta: number,
     focusPosition: THREE.Vector3,
     camera: THREE.Camera,
-    scene: THREE.Scene
+    scene: THREE.Scene,
+    /** Per-biome air tint (from biomes.BIOME_FOG_TINT, blended at the player).
+     * Multiplies fog/haze/mountain colors so each ecosystem has its own vibe. */
+    fogTint?: readonly [number, number, number],
   ): void {
     this.elapsedTime += delta;
     this.gameMinutes = (this.gameMinutes + delta * 6) % (24 * 60);
@@ -582,6 +585,11 @@ export class SkyEnvironment extends THREE.Group {
     this.starsMaterial.uniforms.time.value = this.elapsedTime;
 
     this.fogColor.copy(this.lowerSkyColor).lerp(this.upperSkyColor, 0.35);
+    if (fogTint) {
+      this.fogColor.r *= fogTint[0];
+      this.fogColor.g *= fogTint[1];
+      this.fogColor.b *= fogTint[2];
+    }
     scene.background = this.upperSkyColor.clone();
     if (scene.fog instanceof THREE.Fog) {
       scene.fog.color.copy(this.fogColor);

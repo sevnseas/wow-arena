@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
 import { REGION_FOOTPRINTS } from './regions';
+import { biomeWeightsGLSL } from './biomes';
 
 // A large open world (one unit per segment, so SIZE === SEGMENTS keeps the
 // integer-floor height lookup valid). Rolling hills via layered noise, with a
@@ -138,6 +139,7 @@ function createTerrainMaterial(): THREE.MeshStandardMaterial {
           for (int i = 0; i < 4; i++) { v += a * tnoise(p); p *= 2.03; a *= 0.5; }
           return v;
         }
+        ${biomeWeightsGLSL()}
         vec3 terrainColor() {
           vec3 wp = vTerrWorld;
           float f = clamp(wp.y / ${MAXH}, 0.0, 1.0);
@@ -176,6 +178,21 @@ function createTerrainMaterial(): THREE.MeshStandardMaterial {
           col += (fine - 0.5) * 0.045;
           // Steep faces turn to exposed rock.
           col = mix(col, SLOPE * (0.8 + 0.4 * macro), smoothstep(0.34, 0.62, slope));
+
+          // Ecosystem gradients: each biome zone tints the ground its own
+          // way, blended smoothly by the shared weight field. Borders are
+          // warped by the macro noise so they wander organically.
+          vec2 bp = wp.xz + (macro - 0.5) * 26.0;
+          vec4 bw = biomeWeights(bp);
+          vec3 biomeTint =
+              bw.x * vec3(1.0, 1.0, 1.0) +      // grassland
+              bw.y * vec3(1.38, 0.92, 0.52) +   // autumn amber
+              bw.z * vec3(1.30, 1.10, 0.62) +   // arid gold
+              bw.w * vec3(0.94, 1.00, 1.08);    // tundra frost
+          col *= biomeTint;
+          // Tundra additionally desaturates toward a frosted pale green.
+          float blum = dot(col, vec3(0.299, 0.587, 0.114));
+          col = mix(col, vec3(blum) * vec3(0.96, 1.02, 1.06), bw.w * 0.55);
 
           return max(col, vec3(0.0));
         }

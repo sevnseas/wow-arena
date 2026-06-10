@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { getTerrainHeight } from './terrain';
 import { REGION_FOOTPRINTS } from './regions';
+import { blendBiomeColor, BIOME_FOLIAGE } from './biomes';
 
 const BASE = (import.meta as any).env?.BASE_URL ?? '/';
 const TREE_GLB_URL = `${BASE}trees/tree.glb`;
@@ -158,6 +159,7 @@ interface TreeAssets {
   foliageMesh: THREE.Mesh;
   foliageMaterial: THREE.MeshStandardMaterial;
   trunkMaterial: THREE.Material;
+  alphaMap: THREE.Texture;
 }
 
 let assetsPromise: Promise<TreeAssets> | null = null;
@@ -206,13 +208,17 @@ function loadTreeAssets(): Promise<TreeAssets> {
 
     startWindTicker();
 
-    return { trunkMesh, foliageMesh, foliageMaterial, trunkMaterial };
+    return { trunkMesh, foliageMesh, foliageMaterial, trunkMaterial, alphaMap };
   });
 
   return assetsPromise;
 }
 
-function buildTreeMesh(assets: TreeAssets, scale: number): THREE.Group {
+function buildTreeMesh(
+  assets: TreeAssets,
+  scale: number,
+  foliageMaterial: THREE.MeshStandardMaterial = assets.foliageMaterial,
+): THREE.Group {
   const tree = new THREE.Group();
   tree.name = 'Tree';
 
@@ -224,7 +230,7 @@ function buildTreeMesh(assets: TreeAssets, scale: number): THREE.Group {
   trunk.receiveShadow = true;
   tree.add(trunk);
 
-  const foliage = new THREE.Mesh(assets.foliageMesh.geometry, assets.foliageMaterial);
+  const foliage = new THREE.Mesh(assets.foliageMesh.geometry, foliageMaterial);
   foliage.position.copy(assets.foliageMesh.position);
   foliage.quaternion.copy(assets.foliageMesh.quaternion);
   foliage.scale.copy(assets.foliageMesh.scale);
@@ -286,8 +292,24 @@ export function createForest(terrainHeightData: Uint8Array | null): THREE.Group 
 
   loadTreeAssets()
     .then((assets) => {
+      // Biome-blended foliage: each tree samples the local ecosystem mix and
+      // takes the blended canopy color (rust in autumn, frosted sage in
+      // tundra, olive in arid). Colors are quantized into a small material
+      // cache so the forest stays a handful of shader programs.
+      const matCache = new Map<string, THREE.MeshStandardMaterial>();
+      const foliageFor = (x: number, z: number) => {
+        const c = blendBiomeColor(x, z, (k) => BIOME_FOLIAGE[k]);
+        const key = `${Math.round(c.r * 12)}/${Math.round(c.g * 12)}/${Math.round(c.b * 12)}`;
+        let m = matCache.get(key);
+        if (!m) {
+          m = createFoliageMaterial(assets.alphaMap);
+          m.color.copy(c);
+          matCache.set(key, m);
+        }
+        return m;
+      };
       for (const p of placements) {
-        const tree = buildTreeMesh(assets, p.scale);
+        const tree = buildTreeMesh(assets, p.scale, foliageFor(p.x, p.z));
         tree.position.set(p.x, p.y, p.z);
         tree.rotation.y = p.rotY;
         forest.add(tree);

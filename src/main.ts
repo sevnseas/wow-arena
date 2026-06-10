@@ -15,6 +15,7 @@
 
 import * as THREE from 'three';
 import { createAxisGizmo } from './coords';
+import { blendBiomeTint, BIOME_FOG_TINT } from './biomes';
 import { createArena, getColliders, getTerrainHeightData, Collider } from './arena';
 import { createRegions } from './regions';
 import { CameraRig } from './camera';
@@ -1148,7 +1149,12 @@ function animateStandalone(state: GameState, delta: number): void {
 
   // Update camera
   state.cameraRig.update(state.player.position);
-  state.sky.update(delta, state.player.position, state.cameraRig.camera, state.scene);
+  state.sky.update(
+    delta, state.player.position, state.cameraRig.camera, state.scene,
+    // Each ecosystem tints the air around the player (amber autumn haze,
+    // dusty arid gold, frosted tundra blue) — blended by the biome field.
+    blendBiomeTint(state.player.position.x, state.player.position.z, BIOME_FOG_TINT),
+  );
 
   // Update targeting
   state.targeting.update(state.player.position);
@@ -1229,7 +1235,12 @@ function animateMultiplayer(state: GameState, delta: number): void {
 
   // Update camera
   state.cameraRig.update(state.player.position);
-  state.sky.update(delta, state.player.position, state.cameraRig.camera, state.scene);
+  state.sky.update(
+    delta, state.player.position, state.cameraRig.camera, state.scene,
+    // Each ecosystem tints the air around the player (amber autumn haze,
+    // dusty arid gold, frosted tundra blue) — blended by the biome field.
+    blendBiomeTint(state.player.position.x, state.player.position.z, BIOME_FOG_TINT),
+  );
 
   // Update targeting
   state.targeting.update(state.player.position);

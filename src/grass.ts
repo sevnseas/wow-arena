@@ -15,6 +15,7 @@
 
 import * as THREE from 'three';
 import { REGION_FOOTPRINTS } from './regions';
+import { blendBiomeTint, BIOME_GROUND_TINT } from './biomes';
 
 export interface GrassFieldParams {
   seed: number;
@@ -277,9 +278,14 @@ export class GrassField extends THREE.Group {
       // Clamp tightly so a hue nudge on a low channel (e.g. blue in a green
       // tip) can't explode into a neon spike.
       const clampTint = (v: number) => Math.max(0.75, Math.min(1.25, v));
-      tints[i * 3 + 0] = clampTint(tinted.r / Math.max(0.001, tintBase.r));
-      tints[i * 3 + 1] = clampTint(tinted.g / Math.max(0.001, tintBase.g));
-      tints[i * 3 + 2] = clampTint(tinted.b / Math.max(0.001, tintBase.b));
+      // Biome gradient: blades take on the local ecosystem's tint (amber in
+      // autumn, gold in arid, frosted in tundra), blended smoothly across
+      // zone borders by the shared biome weight field.
+      const bt = blendBiomeTint(x, z, BIOME_GROUND_TINT);
+      const clampBiome = (v: number) => Math.max(0.45, Math.min(1.7, v));
+      tints[i * 3 + 0] = clampBiome(clampTint(tinted.r / Math.max(0.001, tintBase.r)) * bt[0]);
+      tints[i * 3 + 1] = clampBiome(clampTint(tinted.g / Math.max(0.001, tintBase.g)) * bt[1]);
+      tints[i * 3 + 2] = clampBiome(clampTint(tinted.b / Math.max(0.001, tintBase.b)) * bt[2]);
 
       phases[i] = rng() * Math.PI * 2;
     }
