@@ -351,27 +351,90 @@ function buildRocks(
   // collapses verts that share BOTH. To get a truly watertight shape, strip
   // the UV attribute first — rocks have no texture map. Then merge, jitter
   // the unique vertex set, and go back to non-indexed for flat shading.
-  const rawGeo = new THREE.IcosahedronGeometry(0.35, 1);
-  rawGeo.deleteAttribute('uv');
-  rawGeo.deleteAttribute('normal');
-  const indexed = mergeVertices(rawGeo, 1e-3);
-  const ipos = indexed.attributes.position as THREE.BufferAttribute;
-  const j = makeRng(0xC0DE);
-  for (let i = 0; i < ipos.count; i++) {
-    const f = 0.78 + j() * 0.42;
-    ipos.setXYZ(i, ipos.getX(i) * f, ipos.getY(i) * f, ipos.getZ(i) * f);
-  }
-  const geo = indexed.toNonIndexed();
-  geo.computeVertexNormals();
-  rawGeo.dispose();
-  indexed.dispose();
+  // Several silhouette variants (different jitter seeds, one chunkier
+  // low-detail shape, one craggier high-detail shape) so boulder fields don't
+  // read as the same rock stamped everywhere.
+  const buildRockGeo = (seed: number, detail: number, jitter: number) => {
+    const rawGeo = new THREE.IcosahedronGeometry(0.35, detail);
+    rawGeo.deleteAttribute('uv');
+    rawGeo.deleteAttribute('normal');
+    const indexed = mergeVertices(rawGeo, 1e-3);
+    const ipos = indexed.attributes.position as THREE.BufferAttribute;
+    const j = makeRng(seed);
+    for (let i = 0; i < ipos.count; i++) {
+      const f = 1 - jitter / 2 + j() * jitter;
+      ipos.setXYZ(i, ipos.getX(i) * f, ipos.getY(i) * f, ipos.getZ(i) * f);
+    }
+    const out = indexed.toNonIndexed();
+    out.computeVertexNormals();
+    rawGeo.dispose();
+    indexed.dispose();
+    return out;
+  };
+  const geoVariants = [
+    buildRockGeo(0xC0DE, 1, 0.42),
+    buildRockGeo(0xBEEF, 1, 0.55),
+    buildRockGeo(0xFACE, 2, 0.34),
+  ];
 
+  // White base — the full rock color is carried by per-instance colors
+  // (instanceColor multiplies material.color, so a tinted base would darken
+  // every rock toward black).
   const mat = new THREE.MeshStandardMaterial({
-    color: palette.rock,
+    color: 0xffffff,
     roughness: 1.0,
     metalness: 0.0,
     flatShading: true,
   });
+  // Broad procedural texturing: world-space tonal noise plus a mossy tint
+  // creeping up from the ground on near-flat upward faces.
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\n varying vec3 vRockWorld;')
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n vRockWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        /* glsl */ `
+        #include <common>
+        varying vec3 vRockWorld;
+        float rkhash(vec3 p) {
+          p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+          p *= 17.0;
+          return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+        }
+        float rknoise(vec3 p) {
+          vec3 i = floor(p), f = fract(p);
+          vec3 u = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(mix(rkhash(i), rkhash(i + vec3(1,0,0)), u.x),
+                mix(rkhash(i + vec3(0,1,0)), rkhash(i + vec3(1,1,0)), u.x), u.y),
+            mix(mix(rkhash(i + vec3(0,0,1)), rkhash(i + vec3(1,0,1)), u.x),
+                mix(rkhash(i + vec3(0,1,1)), rkhash(i + vec3(1,1,1)), u.x), u.y),
+            u.z);
+        }
+        `,
+      )
+      .replace(
+        'vec4 diffuseColor = vec4( diffuse, opacity );',
+        /* glsl */ `
+        vec4 diffuseColor = vec4( diffuse, opacity );
+        {
+          float grain = rknoise(vRockWorld * 2.2) * 0.6 + rknoise(vRockWorld * 9.0) * 0.4;
+          diffuseColor.rgb *= 0.84 + grain * 0.32;
+          // Mossy green on up-facing surfaces (face normal via derivatives —
+          // matches the flat shading).
+          vec3 fn = normalize(cross(dFdx(vRockWorld), dFdy(vRockWorld)));
+          float up = clamp(fn.y, 0.0, 1.0);
+          float moss = smoothstep(0.55, 0.95, up) * smoothstep(0.3, 0.75, rknoise(vRockWorld * 1.1));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.30, 0.42, 0.18), moss * 0.5);
+        }
+        `,
+      );
+  };
 
   // Vein centers. Number scales with map size so big maps don't feel sparse.
   const mapSize = p.outerRadius - p.innerRadius;
@@ -451,19 +514,29 @@ function buildRocks(
     if (tryPush(x, z, size, 0.5 + rng() * 0.5)) placed++;
   }
 
-  // Pack into a single InstancedMesh for perf.
-  const mesh = new THREE.InstancedMesh(geo, mat, allRocks.length);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  // Pack into one InstancedMesh per geometry variant (still 3 draw calls).
+  // Variant choice and a warm/cool grey per-instance tint keep fields varied.
+  const variantOf = (i: number) => i % geoVariants.length;
+  const counts = geoVariants.map((_, vi) =>
+    allRocks.reduce((n, _r, i) => n + (variantOf(i) === vi ? 1 : 0), 0));
+  const meshes = geoVariants.map((g, vi) => {
+    const m = new THREE.InstancedMesh(g, mat, counts[vi]);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  });
 
   const tmpMatrix = new THREE.Matrix4();
   const tmpQuat = new THREE.Quaternion();
   const tmpPos = new THREE.Vector3();
   const tmpScale = new THREE.Vector3();
+  const tmpColor = new THREE.Color();
+  const baseColor = new THREE.Color(palette.rock);
   // Icosahedron radius pre-scale; after scaling by `size`, bottom is at
   // `-size * baseRadius * squash`. Lift so the bottom rests on the terrain
   // (with a small sink for large boulders so they read as embedded hills).
   const BASE_ROCK_R = 0.35;
+  const cursor = geoVariants.map(() => 0);
   for (let i = 0; i < allRocks.length; i++) {
     const r = allRocks[i];
     const halfH = r.size * BASE_ROCK_R * r.squash;
@@ -473,10 +546,22 @@ function buildRocks(
     tmpScale.set(r.size, r.size * r.squash, r.size);
     tmpQuat.setFromEuler(new THREE.Euler(rng() * 0.4, rng() * Math.PI * 2, rng() * 0.4));
     tmpMatrix.compose(tmpPos, tmpQuat, tmpScale);
-    mesh.setMatrixAt(i, tmpMatrix);
+    const vi = variantOf(i);
+    const slot = cursor[vi]++;
+    meshes[vi].setMatrixAt(slot, tmpMatrix);
+    // Tint: drift between cool grey and warm sandstone, darker for small stones.
+    const warm = rng();
+    const lum = 0.82 + rng() * 0.3 + Math.min(0.12, r.size * 0.03);
+    tmpColor.copy(baseColor)
+      .lerp(new THREE.Color(0x8d7a5e), warm * 0.4)
+      .multiplyScalar(lum);
+    meshes[vi].setColorAt(slot, tmpColor);
   }
-  mesh.instanceMatrix.needsUpdate = true;
-  group.add(mesh);
+  for (const m of meshes) {
+    m.instanceMatrix.needsUpdate = true;
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    group.add(m);
+  }
 
   // Per-rock cylinder collider (derived from the icosahedron's scaled radius).
   // Only register rocks above a threshold — tiny pebbles shouldn't block

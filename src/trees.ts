@@ -272,6 +272,18 @@ export function createForest(terrainHeightData: Uint8Array | null): THREE.Group 
     });
   }
 
+  // Trunk colliders — registered synchronously from the placements (the GLB
+  // meshes stream in later, but the trunks always end up at these spots).
+  // Radius tracks the visual trunk (~0.22 of base scale); not climbable, so
+  // trunks act as thin walls instead of platforms.
+  forest.userData.colliders = placements.map(p => ({
+    type: 'cylinder' as const,
+    x: p.x,
+    z: p.z,
+    radius: 0.28 * p.scale,
+    height: p.y + 6 * p.scale,
+  }));
+
   loadTreeAssets()
     .then((assets) => {
       for (const p of placements) {

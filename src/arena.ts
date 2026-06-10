@@ -218,8 +218,10 @@ export function createArena(): THREE.Group {
   // (Boundary walls removed — the world is open now; the pillars + ramps stay
   // as a central landmark, not a pen.)
 
-  // Forest
-  arena.add(createForest(terrainHeightData));
+  // Forest — trunk colliders are authored synchronously on the group.
+  const forest = createForest(terrainHeightData);
+  arena.add(forest);
+  colliders.push(...((forest.userData.colliders as Collider[]) ?? []));
 
   return arena;
 }

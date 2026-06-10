@@ -22,15 +22,24 @@ const SKY_SHADER = {
     uniform vec3 uSunColor;
     uniform vec3 uSkyColorLow;
     uniform vec3 uSkyColorHigh;
+    uniform vec3 uHazeColor;
     uniform float uSunSize;
 
     void main() {
       vec3 direction = normalize(vWorldPosition);
-      vec3 skyColor = mix(
-        uSkyColorLow,
-        uSkyColorHigh,
-        clamp(direction.y * 0.5 + 0.5, 0.0, 1.0)
-      );
+
+      // Compressed gradient: saturated zenith arrives faster than a linear
+      // mix, leaving a broad luminous band near the horizon (the painted-
+      // backdrop look of WoW skyboxes).
+      float h = clamp(direction.y, 0.0, 1.0);
+      vec3 skyColor = mix(uSkyColorLow, uSkyColorHigh, pow(h, 0.6));
+
+      // Pale haze hugging the horizon, matching the scene fog so distant
+      // terrain melts into the sky instead of meeting a hard line.
+      float haze = 1.0 - smoothstep(0.0, 0.22, h);
+      skyColor = mix(skyColor, uHazeColor, haze * 0.8);
+      // Below the horizon, fade fully into haze.
+      skyColor = mix(skyColor, uHazeColor, smoothstep(0.0, -0.12, direction.y));
 
       float azimuth = radians(uSunAzimuth);
       float elevation = radians(uSunElevation);
@@ -40,8 +49,11 @@ const SKY_SHADER = {
         cos(elevation) * cos(azimuth)
       ));
 
-      float sunIntensity = pow(max(dot(direction, sunDirection), 0.0), 1000.0 / uSunSize);
-      vec3 sunColor = uSunColor * sunIntensity;
+      float sunDot = max(dot(direction, sunDirection), 0.0);
+      float sunDisc = pow(sunDot, 1000.0 / uSunSize);
+      // Wide soft halo around the sun — warm atmospheric scatter.
+      float sunGlow = pow(sunDot, 12.0) * 0.28 + pow(sunDot, 3.0) * 0.06;
+      vec3 sunColor = uSunColor * (sunDisc + sunGlow);
 
       gl_FragColor = vec4(skyColor + sunColor, 1.0);
     }
@@ -289,6 +301,58 @@ function buildStars(count = 5000): THREE.Points {
   return stars;
 }
 
+/**
+ * A ring of jagged silhouette ridges that encircles the camera at a fixed
+ * radius — the classic WoW "distant zone mountains" backdrop. Pure unlit
+ * color, tinted toward the fog/haze each frame so the peaks read as far-off
+ * landmass dissolving into atmosphere rather than geometry.
+ */
+function buildMountainRing(
+  radius: number,
+  peakMin: number,
+  peakMax: number,
+  seed: number,
+): THREE.Mesh {
+  const SEG = 160;
+  const positions = new Float32Array((SEG + 1) * 2 * 3);
+  const indices: number[] = [];
+  const BASE_Y = -60;
+
+  const ridge = (a: number) =>
+    peakMin +
+    (peakMax - peakMin) *
+      (0.5 +
+        0.28 * Math.sin(a * 3.0 + seed) +
+        0.18 * Math.sin(a * 7.0 + seed * 2.7) +
+        0.09 * Math.sin(a * 13.0 + seed * 5.1) +
+        0.05 * Math.sin(a * 23.0 + seed * 9.3));
+
+  for (let i = 0; i <= SEG; i++) {
+    const a = (i / SEG) * Math.PI * 2;
+    const x = Math.cos(a) * radius;
+    const z = Math.sin(a) * radius;
+    positions.set([x, BASE_Y, z], i * 6);
+    positions.set([x, ridge(a), z], i * 6 + 3);
+    if (i < SEG) {
+      const b = i * 2;
+      indices.push(b, b + 1, b + 2, b + 1, b + 3, b + 2);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x8aa3b8,
+    side: THREE.DoubleSide,
+    fog: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
 export class SkyEnvironment extends THREE.Group {
   private readonly skyMaterial: THREE.ShaderMaterial;
   private readonly cloudMaterial: THREE.ShaderMaterial;
@@ -296,6 +360,8 @@ export class SkyEnvironment extends THREE.Group {
   private readonly sky: THREE.Mesh;
   private readonly clouds: THREE.Mesh;
   private readonly stars: THREE.Points;
+  private readonly mountainsFar: THREE.Mesh;
+  private readonly mountainsNear: THREE.Mesh;
   private readonly ambient: THREE.AmbientLight;
   private readonly hemi: THREE.HemisphereLight;
   private readonly sun: THREE.DirectionalLight;
@@ -322,6 +388,7 @@ export class SkyEnvironment extends THREE.Group {
         uSunColor: { value: new THREE.Color(0xffe5b0) },
         uSkyColorLow: { value: new THREE.Color(0x6fa2ef) },
         uSkyColorHigh: { value: new THREE.Color(0x2053ff) },
+        uHazeColor: { value: new THREE.Color(0x9bb6c9) },
         uSunSize: { value: 1.0 }
       },
       side: THREE.BackSide,
@@ -359,6 +426,11 @@ export class SkyEnvironment extends THREE.Group {
     this.stars = buildStars();
     this.starsMaterial = this.stars.material as THREE.ShaderMaterial;
 
+    // Two silhouette rings give parallax-free depth: a tall hazy far range
+    // and a slightly darker, lower near range in front of it.
+    this.mountainsFar = buildMountainRing(820, 24, 88, 3.7);
+    this.mountainsNear = buildMountainRing(640, 10, 52, 11.2);
+
     this.ambient = new THREE.AmbientLight(0xffffff, 0.35);
     this.hemi = new THREE.HemisphereLight(0x87ceeb, 0x243018, 0.25);
     this.sun = new THREE.DirectionalLight(0xffffee, 1.0);
@@ -376,6 +448,8 @@ export class SkyEnvironment extends THREE.Group {
     this.add(this.sky);
     this.add(this.clouds);
     this.add(this.stars);
+    this.add(this.mountainsFar);
+    this.add(this.mountainsNear);
     this.add(this.ambient);
     this.add(this.hemi);
     this.add(this.sun);
@@ -490,6 +564,8 @@ export class SkyEnvironment extends THREE.Group {
     this.sky.position.copy(camera.position);
     this.stars.position.copy(camera.position);
     this.clouds.position.set(camera.position.x, 350, camera.position.z);
+    this.mountainsFar.position.set(camera.position.x, 0, camera.position.z);
+    this.mountainsNear.position.set(camera.position.x, 0, camera.position.z);
 
     this.sun.position.copy(focusPosition).addScaledVector(this.sunDirection, 120);
     this.sun.target.position.copy(focusPosition);
@@ -510,5 +586,19 @@ export class SkyEnvironment extends THREE.Group {
     if (scene.fog instanceof THREE.Fog) {
       scene.fog.color.copy(this.fogColor);
     }
+
+    // Horizon haze in the sky shader matches the scene fog, so the far
+    // terrain, mountain silhouettes and sky all dissolve into one tone.
+    (this.skyMaterial.uniforms.uHazeColor.value as THREE.Color).copy(this.fogColor);
+
+    // Tint the silhouette ranges: the far ring sits almost in the haze, the
+    // near ring keeps a little more body and a cool shadowed hue.
+    const ridgeBase = isDaytime
+      ? new THREE.Color(0x55687a)
+      : new THREE.Color(0x10141c);
+    (this.mountainsFar.material as THREE.MeshBasicMaterial).color
+      .copy(ridgeBase).lerp(this.fogColor, 0.8);
+    (this.mountainsNear.material as THREE.MeshBasicMaterial).color
+      .copy(ridgeBase).lerp(this.fogColor, 0.58);
   }
 }

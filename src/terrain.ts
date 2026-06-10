@@ -68,18 +68,23 @@ function generateHeightData(width: number, height: number): Uint8Array {
  */
 export function getTerrainHeight(x: number, z: number, heightData: Uint8Array | null): number {
   if (!heightData) return 0;
-  const centerX = TERRAIN_SIZE / 2;
-  const centerZ = TERRAIN_SIZE / 2;
-  const localX = Math.floor(x + centerX);
-  const localZ = Math.floor(z + centerZ);
+  // Bilinear interpolation between the four surrounding height samples so
+  // walking/placement follows the actual mesh slope instead of stair-stepping
+  // a full segment at a time.
+  const fx = x + TERRAIN_SIZE / 2;
+  const fz = z + TERRAIN_SIZE / 2;
+  const x0 = Math.max(0, Math.min(TERRAIN_SEGMENTS - 2, Math.floor(fx)));
+  const z0 = Math.max(0, Math.min(TERRAIN_SEGMENTS - 2, Math.floor(fz)));
+  const tx = Math.max(0, Math.min(1, fx - x0));
+  const tz = Math.max(0, Math.min(1, fz - z0));
 
-  // Clamp to terrain bounds
-  const clampedX = Math.max(0, Math.min(TERRAIN_SEGMENTS - 1, localX));
-  const clampedZ = Math.max(0, Math.min(TERRAIN_SEGMENTS - 1, localZ));
+  const h00 = heightData[z0 * TERRAIN_SEGMENTS + x0];
+  const h10 = heightData[z0 * TERRAIN_SEGMENTS + x0 + 1];
+  const h01 = heightData[(z0 + 1) * TERRAIN_SEGMENTS + x0];
+  const h11 = heightData[(z0 + 1) * TERRAIN_SEGMENTS + x0 + 1];
 
-  const dataIndex = clampedZ * TERRAIN_SEGMENTS + clampedX;
-  const normalizedHeight = heightData[dataIndex] / 255;
-  return normalizedHeight * TERRAIN_MAX_HEIGHT;
+  const h = (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+  return (h / 255) * TERRAIN_MAX_HEIGHT;
 }
 
 /**
@@ -145,26 +150,28 @@ function createTerrainMaterial(): THREE.MeshStandardMaterial {
           float meso  = tfbm(wp.xz * 0.12 + 11.3);
           float fine  = tnoise(wp.xz * 0.75);
 
-          const vec3 LOW   = vec3(0.357, 0.478, 0.180); // lush lowland
-          const vec3 MID   = vec3(0.435, 0.541, 0.220); // meadow olive
-          const vec3 DRY   = vec3(0.541, 0.588, 0.282); // dry grass
-          const vec3 TAN   = vec3(0.690, 0.604, 0.361); // tan slope soil
-          const vec3 ROCKT = vec3(0.792, 0.749, 0.627); // pale peak
+          // Richer, more saturated WoW greens — lowlands stay lush (Elwynn /
+          // Nagrand meadow) and only high ground dries out toward tan.
+          const vec3 LOW   = vec3(0.243, 0.447, 0.149); // lush lowland
+          const vec3 MID   = vec3(0.337, 0.514, 0.176); // meadow green
+          const vec3 DRY   = vec3(0.490, 0.557, 0.243); // dry grass
+          const vec3 TAN   = vec3(0.659, 0.573, 0.345); // tan slope soil
+          const vec3 ROCKT = vec3(0.769, 0.722, 0.596); // pale peak
           const vec3 SLOPE = vec3(0.430, 0.392, 0.330); // cliff rock
-          const vec3 DIRT  = vec3(0.420, 0.333, 0.196); // bare earth
+          const vec3 DIRT  = vec3(0.408, 0.310, 0.176); // bare earth
 
           vec3 col = LOW;
-          col = mix(col, MID, smoothstep(0.08, 0.30, f));
-          col = mix(col, DRY, smoothstep(0.32, 0.55, f));
-          col = mix(col, TAN, smoothstep(0.55, 0.78, f));
-          col = mix(col, ROCKT, smoothstep(0.80, 0.96, f));
+          col = mix(col, MID, smoothstep(0.10, 0.34, f));
+          col = mix(col, DRY, smoothstep(0.42, 0.66, f));
+          col = mix(col, TAN, smoothstep(0.64, 0.84, f));
+          col = mix(col, ROCKT, smoothstep(0.84, 0.97, f));
 
           // Macro light/dark patches.
-          col *= 0.84 + 0.30 * macro;
+          col *= 0.86 + 0.26 * macro;
           // Bare-earth patches in the lowlands.
-          col = mix(col, DIRT, smoothstep(0.58, 0.95, meso) * 0.40 * (1.0 - f));
-          // Sun-bleached golden patches.
-          col = mix(col, col * vec3(1.06, 1.04, 0.90), smoothstep(0.25, 0.85, macro) * 0.5);
+          col = mix(col, DIRT, smoothstep(0.60, 0.95, meso) * 0.35 * (1.0 - f));
+          // Sun-warmed golden patches — kept subtle so the field stays green.
+          col = mix(col, col * vec3(1.07, 1.03, 0.88), smoothstep(0.45, 0.95, macro) * 0.35);
           // Fine grain.
           col += (fine - 0.5) * 0.045;
           // Steep faces turn to exposed rock.

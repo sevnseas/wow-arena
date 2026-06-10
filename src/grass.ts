@@ -41,10 +41,10 @@ export const DEFAULT_GRASS_PARAMS: GrassFieldParams = {
   bladeWidth: 0.11,
   windStrength: 0.1,
   windSpeed: 1.5,
-  // Warm Nagrand/Elwynn olive→lime. Brighter base so the field reads as a
-  // continuous carpet rather than dark-rooted neon spikes.
-  baseColor: 0x4c6a2c,
-  tipColor: 0x9fc457,
+  // Matched to the terrain shader's lush-lowland band so blades grow out of
+  // the ground color instead of floating on it; tips lift toward warm lime.
+  baseColor: 0x3e6322,
+  tipColor: 0x8dbb4a,
   hueJitter: 0.14,
   patchiness: 0.3,
   crossPlanes: true,
@@ -79,10 +79,25 @@ const VERTEX_SHADER = /* glsl */ `
     vUv = uv;
     vInstanceTint = aTint;
 
-    vec4 mvPosition = vec4(position, 1.0);
+    // Taper the blade toward the tip so it reads as a curved leaf, not a
+    // rectangle strip. Local xz shrink keeps both cross planes symmetric.
+    vec3 tapered = position;
+    float taper = mix(1.0, 0.12, uv.y * uv.y);
+    tapered.x *= taper;
+    tapered.z *= taper;
+
+    vec4 mvPosition = vec4(tapered, 1.0);
     #ifdef USE_INSTANCING
       mvPosition = instanceMatrix * mvPosition;
     #endif
+
+    // Static per-blade arc: each blade bows in its own direction (derived
+    // from its random phase), strongest at the tip — gives the field the
+    // tousled, curved-blade silhouette instead of upright flat cards.
+    vec2 leanDir = vec2(cos(aPhase * 2.4), sin(aPhase * 2.4));
+    float arc = uv.y * uv.y * 0.16;
+    mvPosition.x += leanDir.x * arc;
+    mvPosition.z += leanDir.y * arc;
 
     // Wind: base stays put, tip sways the most. The per-blade phase (aPhase)
     // makes neighbouring blades fall out of sync, producing a wave-like gust.

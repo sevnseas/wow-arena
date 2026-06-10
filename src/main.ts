@@ -704,7 +704,7 @@ async function init(): Promise<GameState> {
   // Pulled-in haze gives the painterly WoW depth — distant trees/hills fade
   // into atmosphere. Colour is overwritten per-frame by the sky to match the
   // horizon; only the near/far falloff matters here.
-  scene.fog = new THREE.Fog(0x9bb6c9, 70, 300);
+  scene.fog = new THREE.Fog(0x9bb6c9, 60, 260);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   if (!renderer.getContext()) {
@@ -757,6 +757,11 @@ async function init(): Promise<GameState> {
   showcaseTree.position.set(6, getTerrainHeight(6, -7, terrainData), -7);
   showcaseTree.scale.setScalar(1.4);
   scene.add(showcaseTree);
+  // Trunk colliders for the hand-placed procedural trees (the GLB forest
+  // registers its own through the arena).
+  const proceduralTreeColliders: Collider[] = [
+    { type: 'cylinder', x: 6, z: -7, radius: 0.30 * 1.4, height: 10 },
+  ];
 
   // Sprinkle a handful more procedural trees around the edges so the
   // procedural pipeline coexists with the GLB forest. Each gets a different
@@ -768,8 +773,10 @@ async function init(): Promise<GameState> {
     const z = Math.sin(angle) * r;
     const t = new ProceduralTree({ seed: 100 + i * 7 });
     t.position.set(x, getTerrainHeight(x, z, terrainData), z);
-    t.scale.setScalar(1.1 + (i % 3) * 0.2);
+    const ts = 1.1 + (i % 3) * 0.2;
+    t.scale.setScalar(ts);
     scene.add(t);
+    proceduralTreeColliders.push({ type: 'cylinder', x, z, radius: 0.30 * ts, height: 10 });
   }
 
   const sky = new SkyEnvironment();
@@ -812,6 +819,7 @@ async function init(): Promise<GameState> {
     ...getColliders(),
     ...ecosystem.getColliders(),
     ...((regions.userData.colliders as Collider[]) ?? []),
+    ...proceduralTreeColliders,
   ];
   let liveState: GameState | null = null;
   const refreshColliders = () => {

@@ -39,13 +39,72 @@ function palette(overrides = {}) {
   return { ...DEFAULT_STRUCTURE_PALETTE, ...overrides };
 }
 
+/**
+ * Broad procedural texturing for every structure piece: world-space value
+ * noise breaks each flat low-poly face into hand-painted tonal patches, and a
+ * subtle directional banding suggests planks / coursed stone / thatch strands
+ * without UVs or texture assets. Shared GLSL so three.js compiles one program.
+ */
+function structureTexturing(shader) {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\n varying vec3 vStructWorld;')
+    .replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\n vStructWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+    );
+  shader.fragmentShader = shader.fragmentShader
+    .replace(
+      '#include <common>',
+      /* glsl */ `
+      #include <common>
+      varying vec3 vStructWorld;
+      float sthash(vec3 p) {
+        p = fract(p * 0.3183099 + vec3(0.1, 0.17, 0.13));
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+      float stnoise(vec3 p) {
+        vec3 i = floor(p), f = fract(p);
+        vec3 u = f * f * (3.0 - 2.0 * f);
+        return mix(
+          mix(mix(sthash(i), sthash(i + vec3(1,0,0)), u.x),
+              mix(sthash(i + vec3(0,1,0)), sthash(i + vec3(1,1,0)), u.x), u.y),
+          mix(mix(sthash(i + vec3(0,0,1)), sthash(i + vec3(1,0,1)), u.x),
+              mix(sthash(i + vec3(0,1,1)), sthash(i + vec3(1,1,1)), u.x), u.y),
+          u.z);
+      }
+      `,
+    )
+    .replace(
+      'vec4 diffuseColor = vec4( diffuse, opacity );',
+      /* glsl */ `
+      vec4 diffuseColor = vec4( diffuse, opacity );
+      {
+        // Painterly tonal patches at two scales.
+        float tonal = stnoise(vStructWorld * 1.7) * 0.65 + stnoise(vStructWorld * 6.5) * 0.35;
+        // Horizontal banding — reads as planks on timber, courses on stone,
+        // strand layers on thatch. Softened by the noise so it never tiles.
+        float band = sin(vStructWorld.y * 9.0 + stnoise(vStructWorld * 2.2) * 3.0) * 0.5 + 0.5;
+        float shade = 0.90 + tonal * 0.18 + band * 0.06;
+        // Weathering: pieces darken slightly toward the ground line.
+        shade *= 0.94 + 0.06 * clamp(vStructWorld.y * 0.6, 0.0, 1.0);
+        diffuseColor.rgb *= shade;
+      }
+      `,
+    );
+}
+
 function mat(color, roughness = 0.95) {
-  return new THREE.MeshStandardMaterial({
+  const m = new THREE.MeshStandardMaterial({
     color,
     roughness,
     metalness: 0,
     flatShading: true,
   });
+  m.onBeforeCompile = structureTexturing;
+  // Identical shader for every structure material → one cached program.
+  m.customProgramCacheKey = () => 'structure-texturing';
+  return m;
 }
 
 function glowMat(color) {
